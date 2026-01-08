@@ -3,6 +3,8 @@
 //
 #include "super_odometry/config/parameter.h"
 
+#include <unordered_map>
+
 // Define color escape codes for ~beautification~
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
@@ -29,7 +31,8 @@ std::string WORLD_FRAME;
 std::string WORLD_FRAME_ROT;
 std::string SENSOR_FRAME;
 std::string SENSOR_FRAME_ROT;
-SensorType sensor;
+SensorType lidar_sensor;
+SensorType imu_sensor;
 
 int PROVIDE_IMU_LASER_EXTRINSIC;
 
@@ -99,7 +102,8 @@ bool USE_IMU_ROLL_PITCH;
 
 bool SAVE_PLY;
 
-std::string SENSOR;
+std::string LIDAR_SENSOR;
+std::string IMU_SENSOR;
 
 
 template <typename T>
@@ -293,12 +297,13 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     node->declare_parameter<std::string>("sensor_frame", "sensor");
     node->declare_parameter<std::string>("sensor_frame_rot", "sensor_rot");
     node->declare_parameter<std::string>("PROJECT_NAME", "");
-    node->declare_parameter<std::string>("sensor", "livox");
+    node->declare_parameter<std::string>("lidar_sensor", "livox");
+    node->declare_parameter<std::string>("imu_sensor", "");
     node->declare_parameter<double>("imu_acc_x_limit", 0.5);
     node->declare_parameter<double>("imu_acc_y_limit", 0.2);
     node->declare_parameter<double>("imu_acc_z_limit", 0.4);
     node->declare_parameter<bool>("save_ply", false);
-    // node->declare_parameter<bool>("use_imu_roll_pitch", false);
+    node->declare_parameter<bool>("use_imu_roll_pitch", false);
 
     
     LASER_TOPIC = node->get_parameter("laser_topic").as_string();
@@ -311,8 +316,12 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     SENSOR_FRAME = node->get_parameter("sensor_frame").as_string();
     SENSOR_FRAME_ROT = node->get_parameter("sensor_frame_rot").as_string();
     ProjectName = node->get_parameter("PROJECT_NAME").as_string();
-    SENSOR = node->get_parameter("sensor").as_string();
-    // USE_IMU_ROLL_PITCH = node->get_parameter("use_imu_roll_pitch").as_bool();
+    LIDAR_SENSOR = node->get_parameter("lidar_sensor").as_string();
+    IMU_SENSOR = node->get_parameter("imu_sensor").as_string();
+    if (IMU_SENSOR.empty()) {
+        IMU_SENSOR = LIDAR_SENSOR;
+    }
+    USE_IMU_ROLL_PITCH = node->get_parameter("use_imu_roll_pitch").as_bool();
     SAVE_PLY = node->get_parameter("save_ply").as_bool();
     IMU_ACC_X_LIMIT = node->get_parameter("imu_acc_x_limit").as_double();
     IMU_ACC_Y_LIMIT = node->get_parameter("imu_acc_y_limit").as_double();
@@ -321,13 +330,21 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     const std::unordered_map<std::string, SensorType> sensorTypeMap = {
         {"velodyne", SensorType::VELODYNE},
         {"ouster", SensorType::OUSTER},
-        {"livox", SensorType::LIVOX}
+        {"livox", SensorType::LIVOX},
+        {"vectornav_enu", SensorType::VECTORNAV_ENU}
     };
 
-    if (sensorTypeMap.find(SENSOR) == sensorTypeMap.end()) {
-        RCLCPP_ERROR(node->get_logger(), "Unsupported sensor type: %s", SENSOR.c_str());
+    if (sensorTypeMap.find(LIDAR_SENSOR) == sensorTypeMap.end()) {
+        RCLCPP_ERROR(node->get_logger(), "Unsupported sensor type: %s", LIDAR_SENSOR.c_str());
         return false;
     }
+    if (sensorTypeMap.find(IMU_SENSOR) == sensorTypeMap.end()) {
+        RCLCPP_ERROR(node->get_logger(), "Unsupported IMU sensor type: %s", IMU_SENSOR.c_str());
+        return false;
+    }
+
+    lidar_sensor = sensorTypeMap.at(LIDAR_SENSOR);
+    imu_sensor = sensorTypeMap.at(IMU_SENSOR);
     
     RCLCPP_INFO(node->get_logger(), "LASER_TOPIC %s", LASER_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "IMU_TOPIC %s", IMU_TOPIC.c_str());
@@ -339,7 +356,9 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME %s", SENSOR_FRAME.c_str());
     RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME_ROT %s", SENSOR_FRAME_ROT.c_str());
     RCLCPP_INFO(node->get_logger(), "ProjectName %s", ProjectName.c_str());
-    RCLCPP_INFO(node->get_logger(), "SENSOR %s", SENSOR.c_str());
+    RCLCPP_INFO(node->get_logger(), "LIDAR_SENSOR %s", LIDAR_SENSOR.c_str());
+    RCLCPP_INFO(node->get_logger(), "IMU_SENSOR %s", IMU_SENSOR.c_str());
+    RCLCPP_INFO(node->get_logger(), "USE_IMU_ROLL_PITCH %d", USE_IMU_ROLL_PITCH);
     RCLCPP_INFO(node->get_logger(), "SAVE_PLY %d", SAVE_PLY);
     RCLCPP_INFO(node->get_logger(), "SAVE_PLY %d", SAVE_PLY);
 

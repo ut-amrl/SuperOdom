@@ -38,7 +38,7 @@
 #include <thread>
 #include <vector>
 
-enum class SensorType {VELODYNE, OUSTER, LIVOX};
+enum class SensorType {VELODYNE, OUSTER, LIVOX, VECTORNAV_ENU};
 extern std::string IMU_TOPIC;
 extern std::string LASER_TOPIC;
 extern std::string ODOM_TOPIC;
@@ -50,7 +50,8 @@ extern std::string WORLD_FRAME;
 extern std::string WORLD_FRAME_ROT;
 extern std::string SENSOR_FRAME;
 extern std::string SENSOR_FRAME_ROT;
-extern SensorType sensor;
+extern SensorType lidar_sensor;
+extern SensorType imu_sensor;
 
 extern int PROVIDE_IMU_LASER_EXTRINSIC;
 
@@ -116,7 +117,8 @@ extern bool USE_IMU_ROLL_PITCH;
 
 extern bool SAVE_PLY;
 
-extern std::string SENSOR; 
+extern std::string LIDAR_SENSOR; 
+extern std::string IMU_SENSOR; 
 
 extern Transformd T_ouster_sensor;
 

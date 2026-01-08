@@ -1,8 +1,10 @@
 /**:
   ros__parameters:
-    imu_topic: "/livox/imu"
+    imu_topic: "/vectornav/imu"
+    imu_sensor: "vectornav_enu"
+
     laser_topic: "/livox/lidar"
-    sensor: "livox"
+    lidar_sensor: "livox"
     use_imu_roll_pitch: true
     save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
     
@@ -11,18 +13,18 @@
     sensor_frame: "sensor"
     sensor_frame_rot: "sensor_rot"
 
-    imu_acc_x_limit: 0.5
-    imu_acc_y_limit: 0.2
-    imu_acc_z_limit: 0.4
+    imu_acc_x_limit: 2.0
+    imu_acc_y_limit: 2.0
+    imu_acc_z_limit: 2.0
 
     # Feature Extraction Params
     feature_extraction_node:
         scan_line: 4 
         min_range: 0.2    #<!-- remove too closed points -->
         filter_point_size: 3
-        voxel_leaf_size: 0.2
+        voxel_leaf_size: 0.5
         lidar_mount_roll_deg: 0.0
-        lidar_mount_pitch_deg: 0.0
+        lidar_mount_pitch_deg: -14.0
         lidar_mount_yaw_deg: 0.0
 
     # Laser Mapping Params
@@ -44,11 +46,11 @@
 
     # IMU Preintegration Params
     imu_preintegration_node:
-        lidar_correction_noise: 0.01
+        lidar_correction_noise: 0.04
         imu_dt: 0.005
         
-        acc_n: 3.9939570888238808e-03          # accelerometer measurement noise standard deviation. #0.2
-        gyr_n: 1.5636343949698187e-03         # gyroscope measurement noise standard deviation.     #0.05
-        acc_w: 6.4356659353532566e-05          # accelerometer bias random work noise standard deviation.  #0.02
-        gyr_w: 3.5640318696367613e-05       # gyroscope bias random work noise standard deviation.     #4.0e-5
+        acc_n: 0.005          # accelerometer measurement noise standard deviation. #0.2
+        gyr_n: 0.000005         # gyroscope measurement noise standard deviation.     #0.05
+        acc_w: 0.005          # accelerometer bias random work noise standard deviation.  #0.02
+        gyr_w: 0.000005       # gyroscope bias random work noise standard deviation.     #4.0e-5
         g_norm: 9.80511    # 0 means you need to provide both imu-camera and laser-camera extrinsic

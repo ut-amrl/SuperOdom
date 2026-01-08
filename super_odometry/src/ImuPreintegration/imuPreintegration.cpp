@@ -2,7 +2,7 @@
 // Created by shibo zhao on 2020-09-27.
 //
 #include "super_odometry/ImuPreintegration/imuPreintegration.h"
-
+#include "super_odometry/utils/imu_frame_utils.h"
 
 namespace super_odometry {
 
@@ -129,13 +129,22 @@ namespace super_odometry {
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
         config_.imu_acc_z_limit = IMU_ACC_Z_LIMIT;
 
-        if (SENSOR == "livox") {
-            config_.sensor = SensorType::LIVOX;
-        } else if (SENSOR == "velodyne") {
-            config_.sensor = SensorType::VELODYNE;
-        } else if (SENSOR == "ouster") {
-            config_.sensor = SensorType::OUSTER;
+        if (LIDAR_SENSOR == "livox") {
+            config_.lidar_sensor = SensorType::LIVOX;
+        } else if (LIDAR_SENSOR == "velodyne") {
+            config_.lidar_sensor = SensorType::VELODYNE;
+        } else if (LIDAR_SENSOR == "ouster") {
+            config_.lidar_sensor = SensorType::OUSTER;
         }   
+
+        if (IMU_SENSOR == "vectornav_enu") {
+            config_.imu_sensor = SensorType::VECTORNAV_ENU;
+        } else if (IMU_SENSOR == "livox") {
+            config_.imu_sensor = SensorType::LIVOX; 
+        }else {
+            RCLCPP_ERROR(this->get_logger(),"Unknown IMU sensor type: %s", IMU_SENSOR.c_str());
+            rclcpp::shutdown();
+        }
 
         return true;
 
@@ -486,15 +495,16 @@ namespace super_odometry {
     }
     //TODO: need to consider the extrinsic matrix of imu and lidar
     sensor_msgs::msg::Imu imuPreintegration::imuConverter(const sensor_msgs::msg::Imu &imu_in) {
+        if (config_.imu_sensor != SensorType::LIVOX) {
+            return imu_in;
+        }
+
         sensor_msgs::msg::Imu imu_out = imu_in;
         
         Eigen::Matrix3d imu_laser_R_Gravity;
         imu_laser_R_Gravity=imu_Init->imu_laser_R_Gravity;
 
-        Eigen::Vector3d rpy;
-        rpy=imu_Init->rotationMatrixToRPY(imu_laser_R_Gravity);
- 
-        // rotate gyro and acc only when sensor is livox
+        // Rotate gyro, acc, and orientation only when the IMU is Livox.
         // rotate gyroscope
         Eigen::Vector3d gyr(imu_in.angular_velocity.x, imu_in.angular_velocity.y,
                             imu_in.angular_velocity.z);
@@ -545,13 +555,28 @@ namespace super_odometry {
 
    void imuPreintegration::imuHandler(const sensor_msgs::msg::Imu::SharedPtr imu_raw) {
     std::lock_guard<std::mutex> lock(mBuf);
+
+    if (IMU_SENSOR == "vectornav_enu") {
+        const double imuTime = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
+        if (last_vectornav_enu_time >= 0.0) {
+            const double dt = imuTime - last_vectornav_enu_time;
+            if (dt <= 0.0 || dt < 0.004) {
+                return;
+            }
+        }
+        last_vectornav_enu_time = imuTime;
+    }
     
+    sensor_msgs::msg::Imu imu_msg = *imu_raw;
+    if (IMU_SENSOR == "vectornav_enu") {
+        utils::imu_rfu_to_flu(imu_msg);
+    }
+        
     // 1. Pre-process IMU data
-    sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);
-    assert(imu_raw->linear_acceleration.x != thisImu.linear_acceleration.x);
+    sensor_msgs::msg::Imu thisImu = imuConverter(imu_msg);
 
     // 2. Handle IMU initialization for LIVOX sensor
-    if (!handleIMUInitialization(imu_raw, thisImu)) {
+    if (!handleIMUInitialization(imu_msg, thisImu)) {
         return;
     }
 
@@ -571,34 +596,33 @@ namespace super_odometry {
    
    }
 
-   bool imuPreintegration::handleIMUInitialization(const sensor_msgs::msg::Imu::SharedPtr&imu_raw, 
-   sensor_msgs::msg::Imu& thisImu) {   
+   bool imuPreintegration::handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, sensor_msgs::msg::Imu& thisImu) {   
 
     if (!imu_init_success) {
         initializeImu(imu_raw);
     }
 
-    if (config_.sensor == SensorType::LIVOX) {
+    if (config_.imu_sensor == SensorType::LIVOX) {
         correctLivoxGravity(thisImu);
     }
     
-    return imu_init_success; 
+   return imu_init_success; 
 
    }
 
-   void imuPreintegration::initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw) {
+   void imuPreintegration::initializeImu(const sensor_msgs::msg::Imu& imu_raw) {
     Imu::Ptr imudata = std::make_shared<Imu>();
-    imudata->time = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
-    imudata->acc = Eigen::Vector3d(imu_raw->linear_acceleration.x,
-                                  imu_raw->linear_acceleration.y,
-                                  imu_raw->linear_acceleration.z);
-    imudata->gyr = Eigen::Vector3d(imu_raw->angular_velocity.x,
-                                  imu_raw->angular_velocity.y,
-                                  imu_raw->angular_velocity.z);
-    imudata->q_w_i = Eigen::Quaterniond(imu_raw->orientation.w,
-                                       imu_raw->orientation.x,
-                                       imu_raw->orientation.y,
-                                       imu_raw->orientation.z);
+    imudata->time = imu_raw.header.stamp.sec + imu_raw.header.stamp.nanosec * 1e-9;
+    imudata->acc = Eigen::Vector3d(imu_raw.linear_acceleration.x,
+                                  imu_raw.linear_acceleration.y,
+                                  imu_raw.linear_acceleration.z);
+    imudata->gyr = Eigen::Vector3d(imu_raw.angular_velocity.x,
+                                  imu_raw.angular_velocity.y,
+                                  imu_raw.angular_velocity.z);
+    imudata->q_w_i = Eigen::Quaterniond(imu_raw.orientation.w,
+                                       imu_raw.orientation.x,
+                                       imu_raw.orientation.y,
+                                       imu_raw.orientation.z);
 
     imuBuf.addMeas(imudata, imudata->time);
 

@@ -73,7 +73,8 @@ namespace super_odometry {
         double lidar_mount_roll_rad;
         double lidar_mount_pitch_rad;
         double lidar_mount_yaw_rad;
-        SensorType sensor;
+        SensorType lidar_sensor;
+        SensorType imu_sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
@@ -144,7 +145,7 @@ namespace super_odometry {
 
         void manageLidarBuffer(pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud, double timestamp);
 
-        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu::SharedPtr& msg);
+        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu& msg);
 
         double calculateDeltaTime(double current_timestamp);
 

@@ -21,6 +21,7 @@
 #define UNDERLINE "\033[4m"
 #define ITALIC "\033[3m"
 
+#include "super_odometry/utils/imu_frame_utils.h"
 
 namespace super_odometry {
     
@@ -69,11 +70,11 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
-        if (config_.sensor == SensorType::VELODYNE || config_.sensor == SensorType::OUSTER) {
+        if (config_.lidar_sensor == SensorType::VELODYNE || config_.lidar_sensor == SensorType::OUSTER) {
             subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos, 
                     std::bind(&featureExtraction::laserCloudHandler, this,
                     std::placeholders::_1), sub_options);
-        } else if (config_.sensor == SensorType::LIVOX) {
+        } else if (config_.lidar_sensor == SensorType::LIVOX) {
             subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos,
                     std::bind(&featureExtraction::livoxHandler, this,
                     std::placeholders::_1), sub_options);
@@ -115,7 +116,12 @@ namespace super_odometry {
         }
 
         delay_count_ = 0;
-        m_imuPeriod = 1.0/config_.imu_dt;
+        if (config_.imu_dt <= 0.0f) {
+            RCLCPP_WARN(this->get_logger(),
+                        "[super_odometry::featureExtraction] imu_dt must be > 0; falling back to 0.005");
+            config_.imu_dt = 0.005f;
+        }
+        m_imuPeriod = config_.imu_dt;
     }
 
     bool featureExtraction::readParameters()
@@ -141,7 +147,8 @@ namespace super_odometry {
         this->declare_parameter<double>("feature_extraction_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_z_limit", 1.0);
-        this->declare_parameter<std::string>("feature_extraction_node.sensor", "livox");
+        this->declare_parameter<std::string>("feature_extraction_node.lidar_sensor", "livox");
+        this->declare_parameter<std::string>("feature_extraction_node.imu_sensor", "livox");
         this->declare_parameter<float>("feature_extraction_node.imu_dt", 0.005);
 
                 
@@ -174,13 +181,27 @@ namespace super_odometry {
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
         config_.imu_acc_z_limit = IMU_ACC_Z_LIMIT;
 
-        if (SENSOR == "livox") {
-            config_.sensor = SensorType::LIVOX;
-        } else if (SENSOR == "velodyne") {
-            config_.sensor = SensorType::VELODYNE;
-        } else if (SENSOR == "ouster") {
-            config_.sensor = SensorType::OUSTER;
+        if (LIDAR_SENSOR == "livox") {
+            config_.lidar_sensor = SensorType::LIVOX;
+        } else if (LIDAR_SENSOR == "velodyne") {
+            config_.lidar_sensor = SensorType::VELODYNE;
+        } else if (LIDAR_SENSOR == "ouster") {
+            config_.lidar_sensor = SensorType::OUSTER;
         } 
+
+        if (IMU_SENSOR == "vectornav_enu") {
+            config_.imu_sensor = SensorType::VECTORNAV_ENU;
+        } else if (IMU_SENSOR == "livox") {
+            config_.imu_sensor = SensorType::LIVOX;
+        } else if (IMU_SENSOR == "velodyne") {
+            config_.imu_sensor = SensorType::VELODYNE;
+        } else if (IMU_SENSOR == "ouster") {
+            config_.imu_sensor = SensorType::OUSTER;
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "Unknown IMU sensor type: %s", IMU_SENSOR.c_str());
+            return false;
+        }
+
         return true;
     }
 
@@ -569,19 +590,19 @@ namespace super_odometry {
         
     }
 
-    ImuMeasurement featureExtraction::parseImuMessage(const sensor_msgs::msg::Imu::SharedPtr& msg) {
+    ImuMeasurement featureExtraction::parseImuMessage(const sensor_msgs::msg::Imu& msg) {
         ImuMeasurement measurement;
-        measurement.timestamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
-        measurement.accel << msg->linear_acceleration.x, 
-                            msg->linear_acceleration.y,
-                            msg->linear_acceleration.z;
-        measurement.gyr << msg->angular_velocity.x, 
-                        msg->angular_velocity.y,
-                        msg->angular_velocity.z;
-        measurement.orientation = Eigen::Quaterniond(msg->orientation.w,
-                                                msg->orientation.x,
-                                                msg->orientation.y,
-                                                msg->orientation.z);
+        measurement.timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9;
+        measurement.accel << msg.linear_acceleration.x,
+                            msg.linear_acceleration.y,
+                            msg.linear_acceleration.z;
+        measurement.gyr << msg.angular_velocity.x,
+                        msg.angular_velocity.y,
+                        msg.angular_velocity.z;
+        measurement.orientation = Eigen::Quaterniond(msg.orientation.w,
+                                                msg.orientation.x,
+                                                msg.orientation.y,
+                                                msg.orientation.z);
         return measurement;
     }
 
@@ -603,7 +624,7 @@ namespace super_odometry {
         imudata->time = measurement.timestamp;
         
         // Handle Livox sensor specific processing
-        if(IMU_INIT && config_.sensor == SensorType::LIVOX) {
+        if(IMU_INIT && config_.imu_sensor == SensorType::LIVOX) {
             double gravity = imu_Init->gravity_norm;
             Eigen::Vector3d gyr = imu_Init->imu_laser_R_Gravity * measurement.gyr;
             Eigen::Vector3d accel = imu_Init->imu_laser_R_Gravity * measurement.accel;
@@ -664,8 +685,24 @@ namespace super_odometry {
 
     void featureExtraction::imu_Handler(const sensor_msgs::msg::Imu::SharedPtr msg_in) {
         m_buf.lock();
+
+        if (IMU_SENSOR == "vectornav_enu") {
+            const double imuTime = msg_in->header.stamp.sec + msg_in->header.stamp.nanosec * 1e-9;
+            double lastImuTime = 0.0;
+            if (imuBuf.getLastTime(lastImuTime)) {
+                const double dt = imuTime - lastImuTime;
+                if (dt <= 0.0 || dt < 0.004) {
+                    m_buf.unlock();
+                    return;
+                }
+            }
+        }
         
-        auto measurement = parseImuMessage(msg_in);
+        sensor_msgs::msg::Imu imu_msg = *msg_in;
+        if (IMU_SENSOR == "vectornav_enu") {
+            utils::imu_rfu_to_flu(imu_msg);
+        }
+        auto measurement = parseImuMessage(imu_msg);
         
         calculateDeltaTime(measurement.timestamp);
         
@@ -769,12 +806,12 @@ namespace super_odometry {
         if (config_.provide_point_time)
         {
 
-            if (config_.sensor == SensorType::VELODYNE)
+            if (config_.lidar_sensor == SensorType::VELODYNE)
             {
                 pcl::fromROSMsg(*laserCloudMsg, *pointCloud);
 
             }
-            else if (config_.sensor == SensorType::OUSTER)
+            else if (config_.lidar_sensor == SensorType::OUSTER)
             {
                 // Convert to Velodyne format
                 pcl::fromROSMsg(*laserCloudMsg, *tmpOusterCloudIn);
@@ -791,7 +828,7 @@ namespace super_odometry {
             }
             else
             {
-                RCLCPP_ERROR(this->get_logger(),"Unknown sensor type: %d", int(sensor));
+                RCLCPP_ERROR(this->get_logger(),"Unknown sensor type: %d", int(lidar_sensor));
                 rclcpp::shutdown();
             }
         }

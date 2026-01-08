@@ -54,7 +54,8 @@ namespace super_odometry {
         float lidar_correction_noise;
         float smooth_factor;
         bool  use_imu_roll_pitch;
-        SensorType sensor;
+        SensorType lidar_sensor;
+        SensorType imu_sensor;
 
         double imu_acc_x_limit;
         double imu_acc_y_limit;
@@ -102,8 +103,7 @@ namespace super_odometry {
 
         void resetParams();
 
-        bool handleIMUInitialization(const sensor_msgs::msg::Imu::SharedPtr&imu_raw, 
-        sensor_msgs::msg::Imu& thisImu);
+        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, sensor_msgs::msg::Imu& thisImu);
 
 
         void updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
@@ -118,7 +118,7 @@ namespace super_odometry {
 
         void processTiming(const sensor_msgs::msg::Imu& thisImu);
 
-        void initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw);
+        void initializeImu(const sensor_msgs::msg::Imu& imu_raw);
 
         void correctLivoxGravity(sensor_msgs::msg::Imu& thisImu);
 
@@ -194,6 +194,7 @@ namespace super_odometry {
         double last_processed_lidar_time = -1;
         double lastImuT_imu = -1;
         double lastImuT_opt = -1;
+        double last_vectornav_enu_time = -1;
         int key = 1;
         int imuPreintegrationResetId = 0;
         int frame_count = 0;

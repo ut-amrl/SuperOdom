@@ -16,7 +16,7 @@ def generate_launch_description():
         file_name="config/livox_mid360_alphatruck.yaml")
     calib_path = get_share_file(
         package_name="super_odometry",
-        file_name="config/livox/livox_mid360_calibration.yaml"
+        file_name="config/livox/livox_mid360_calibration_alphatruck.yaml"
     )
     home_directory = os.path.expanduser("~")
     

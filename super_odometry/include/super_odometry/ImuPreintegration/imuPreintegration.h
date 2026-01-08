@@ -59,6 +59,7 @@ namespace super_odometry {
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
+        float imu_dt;
     };
 
     class imuPreintegration : public rclcpp::Node {

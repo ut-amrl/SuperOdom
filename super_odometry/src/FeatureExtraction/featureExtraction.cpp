@@ -115,7 +115,7 @@ namespace super_odometry {
         }
 
         delay_count_ = 0;
-        m_imuPeriod = 1.0/imu_Init->imu_frequency;
+        m_imuPeriod = 1.0/config_.imu_dt;
     }
 
     bool featureExtraction::readParameters()
@@ -142,6 +142,7 @@ namespace super_odometry {
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_z_limit", 1.0);
         this->declare_parameter<std::string>("feature_extraction_node.sensor", "livox");
+        this->declare_parameter<float>("feature_extraction_node.imu_dt", 0.005);
 
                 
         config_.N_SCANS = this->get_parameter("feature_extraction_node.scan_line").as_int();
@@ -167,6 +168,7 @@ namespace super_odometry {
         config_.imu_acc_x_limit = this->get_parameter("feature_extraction_node.imu_acc_x_limit").as_double();
         config_.imu_acc_y_limit = this->get_parameter("feature_extraction_node.imu_acc_y_limit").as_double();
         config_.imu_acc_z_limit = this->get_parameter("feature_extraction_node.imu_acc_z_limit").as_double();
+        config_.imu_dt = this->get_parameter("feature_extraction_node.imu_dt").as_double();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -448,24 +450,24 @@ namespace super_odometry {
             voxel.filter(*lidar_filtered);
         }
 
-        // if (std::abs(config_.lidar_mount_roll_rad) > 1e-12 ||
-        //     std::abs(config_.lidar_mount_pitch_rad) > 1e-12 ||
-        //     std::abs(config_.lidar_mount_yaw_rad) > 1e-12) {
-        //     const Eigen::Matrix3d mount_R =
-        //         (Eigen::AngleAxisd(config_.lidar_mount_yaw_rad, Eigen::Vector3d::UnitZ()) *
-        //          Eigen::AngleAxisd(config_.lidar_mount_pitch_rad, Eigen::Vector3d::UnitY()) *
-        //          Eigen::AngleAxisd(config_.lidar_mount_roll_rad, Eigen::Vector3d::UnitX()))
-        //             .toRotationMatrix();
-        //     const Eigen::Matrix3d level_R = mount_R.transpose();
+        if (std::abs(config_.lidar_mount_roll_rad) > 1e-12 ||
+            std::abs(config_.lidar_mount_pitch_rad) > 1e-12 ||
+            std::abs(config_.lidar_mount_yaw_rad) > 1e-12) {
+            const Eigen::Matrix3d mount_R =
+                (Eigen::AngleAxisd(config_.lidar_mount_yaw_rad, Eigen::Vector3d::UnitZ()) *
+                 Eigen::AngleAxisd(config_.lidar_mount_pitch_rad, Eigen::Vector3d::UnitY()) *
+                 Eigen::AngleAxisd(config_.lidar_mount_roll_rad, Eigen::Vector3d::UnitX()))
+                    .toRotationMatrix();
+            const Eigen::Matrix3d level_R = mount_R.transpose();
 
-        //     for (auto& pt : lidar_filtered->points) {
-        //         Eigen::Vector3d p(pt.x, pt.y, pt.z);
-        //         p = level_R * p;
-        //         pt.x = static_cast<float>(p.x());
-        //         pt.y = static_cast<float>(p.y());
-        //         pt.z = static_cast<float>(p.z());
-        //     }
-        // }
+            for (auto& pt : lidar_filtered->points) {
+                Eigen::Vector3d p(pt.x, pt.y, pt.z);
+                p = level_R * p;
+                pt.x = static_cast<float>(p.x());
+                pt.y = static_cast<float>(p.y());
+                pt.z = static_cast<float>(p.z());
+            }
+        }
 
         pcl::PointCloud<PointType>::Ptr plannerPoints(new pcl::PointCloud<PointType>());
         plannerPoints->reserve(lidar_filtered->points.size());

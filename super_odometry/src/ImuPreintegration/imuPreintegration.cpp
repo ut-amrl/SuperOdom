@@ -110,6 +110,7 @@ namespace super_odometry {
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_y_limit", 1.0);
         this->declare_parameter<double>("imu_preintegration_node.imu_acc_z_limit", 1.0);
+        this->declare_parameter<float>("imu_preintegration_node.imu_dt", 0.005);
 
         config_.imuAccNoise = this->get_parameter("imu_preintegration_node.acc_n").as_double();
         config_.imuAccBiasN = this->get_parameter("imu_preintegration_node.acc_w").as_double();
@@ -122,6 +123,7 @@ namespace super_odometry {
         config_.imu_acc_x_limit = this->get_parameter("imu_preintegration_node.imu_acc_x_limit").as_double();
         config_.imu_acc_y_limit = this->get_parameter("imu_preintegration_node.imu_acc_y_limit").as_double();
         config_.imu_acc_z_limit = this->get_parameter("imu_preintegration_node.imu_acc_z_limit").as_double();
+        config_.imu_dt = this->get_parameter("imu_preintegration_node.imu_dt").as_double();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -257,11 +259,11 @@ namespace super_odometry {
             double imuTime = secs(thisImu);
             if (imuTime < currentCorrectionTime - delta_t)
             {
-                double dt = (lastImuT_opt < 0) ? (1.0 / 200.0) : (imuTime - lastImuT_opt);
+                double dt = (lastImuT_opt < 0) ? config_.imu_dt : (imuTime - lastImuT_opt);
                 lastImuT_opt = imuTime;
 
                 if(dt < 0.001 || dt > 0.5) 
-                    dt = 0.005;
+                    dt = config_.imu_dt;
                
                 imuIntegratorOpt_->integrateMeasurement(
                         gtsam::Vector3(thisImu->linear_acceleration.x, thisImu->linear_acceleration.y, thisImu->linear_acceleration.z),
@@ -351,11 +353,11 @@ namespace super_odometry {
             for (int i = 0; i < (int)imuQueImu.size(); ++i) {
                 sensor_msgs::msg::Imu *thisImu = &imuQueImu[i];
                 double imuTime = secs(thisImu);
-                double dt = (lastImuQT < 0) ? (1.0 / 200.0) :(imuTime - lastImuQT);
+                double dt = (lastImuQT < 0) ? config_.imu_dt :(imuTime - lastImuQT);
                 lastImuQT = imuTime;
 
                 if(dt < 0.001 || dt > 0.5) 
-                    dt = 0.005;
+                    dt = config_.imu_dt;
 
                 imuIntegratorImu_->integrateMeasurement(
                     gtsam::Vector3(thisImu->linear_acceleration.x, thisImu->linear_acceleration.y, thisImu->linear_acceleration.z),
@@ -508,7 +510,7 @@ namespace super_odometry {
                             imu_in.linear_acceleration.z);
 
         acc=imu_laser_R_Gravity*acc;
-        acc = acc + ((gyr - gyr_pre) * 200).cross(- imu_laser_T) + gyr.cross(gyr.cross(-imu_laser_T));
+        acc = acc + ((gyr - gyr_pre) * 1 / config_.imu_dt).cross(- imu_laser_T) + gyr.cross(gyr.cross(-imu_laser_T));
         imu_out.linear_acceleration.x = acc.x();
         imu_out.linear_acceleration.y = acc.y();
         imu_out.linear_acceleration.z = acc.z();
@@ -626,11 +628,11 @@ void imuPreintegration::correctLivoxGravity(sensor_msgs::msg::Imu& thisImu) {
 
 void imuPreintegration::processTiming(const sensor_msgs::msg::Imu& thisImu) {
     double imuTime = secs(&thisImu);
-    double dt = (lastImuT_imu < 0) ? (1.0 / 200.0) : (imuTime - lastImuT_imu);
+    double dt = (lastImuT_imu < 0) ? config_.imu_dt : (imuTime - lastImuT_imu);
     lastImuT_imu = imuTime;
     
     if (dt < 0.001 || dt > 0.5) {
-        dt = 0.005;
+        dt = config_.imu_dt;
     }
 
     imuQueOpt.push_back(thisImu);

@@ -3,6 +3,10 @@
 //
 
 #include <super_odometry/FeatureExtraction/featureExtraction.h>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <cstdint>
+#include <pcl/filters/voxel_grid.h>
+#include <Eigen/Geometry>
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
 #define RED "\033[31m"     /* Red */
@@ -70,7 +74,7 @@ namespace super_odometry {
                     std::bind(&featureExtraction::laserCloudHandler, this,
                     std::placeholders::_1), sub_options);
         } else if (config_.sensor == SensorType::LIVOX) {
-            subLivoxCloud = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(LASER_TOPIC, 20, 
+            subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos,
                     std::bind(&featureExtraction::livoxHandler, this,
                     std::placeholders::_1), sub_options);
         } //TODO: add this to config
@@ -129,6 +133,10 @@ namespace super_odometry {
         this->declare_parameter<float>("feature_extraction_node.max_range", 130.0);
         this->declare_parameter<int>("feature_extraction_node.filter_point_size", 3);
         this->declare_parameter<int>("feature_extraction_node.provide_point_time", 1);
+        this->declare_parameter<double>("feature_extraction_node.voxel_leaf_size", 0.0);
+        this->declare_parameter<double>("feature_extraction_node.lidar_mount_roll_deg", 0.0);
+        this->declare_parameter<double>("feature_extraction_node.lidar_mount_pitch_deg", 0.0);
+        this->declare_parameter<double>("feature_extraction_node.lidar_mount_yaw_deg", 0.0);
         this->declare_parameter<bool>("feature_extraction_node.debug_view", false);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
@@ -147,6 +155,13 @@ namespace super_odometry {
         config_.max_range = this->get_parameter("feature_extraction_node.max_range").as_double();
         config_.filter_point_size = this->get_parameter("feature_extraction_node.filter_point_size").as_int();
         config_.provide_point_time = this->get_parameter("feature_extraction_node.provide_point_time").as_int();
+        config_.voxel_leaf_size = this->get_parameter("feature_extraction_node.voxel_leaf_size").as_double();
+        const double roll_deg = this->get_parameter("feature_extraction_node.lidar_mount_roll_deg").as_double();
+        const double pitch_deg = this->get_parameter("feature_extraction_node.lidar_mount_pitch_deg").as_double();
+        const double yaw_deg = this->get_parameter("feature_extraction_node.lidar_mount_yaw_deg").as_double();
+        config_.lidar_mount_roll_rad = roll_deg * M_PI / 180.0;
+        config_.lidar_mount_pitch_rad = pitch_deg * M_PI / 180.0;
+        config_.lidar_mount_yaw_rad = yaw_deg * M_PI / 180.0;
         config_.use_dynamic_mask = this->get_parameter("feature_extraction_node.use_dynamic_mask").as_bool(); 
         config_.debug_view_enabled = this->get_parameter("feature_extraction_node.debug_view").as_bool();
         config_.imu_acc_x_limit = this->get_parameter("feature_extraction_node.imu_acc_x_limit").as_double();
@@ -424,16 +439,44 @@ namespace super_odometry {
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg,
         const Eigen::Quaterniond& quaternion)
     {
-        pcl::PointCloud<PointType>::Ptr plannerPoints(new pcl::PointCloud<PointType>());
-        plannerPoints->reserve(lidar_msg->points.size());
-        pcl::PointCloud<PointType>::Ptr edgePoints(new pcl::PointCloud<PointType>());
-        edgePoints->reserve(lidar_msg->points.size());
-        pcl::PointCloud<PointType>::Ptr bobPoints(new pcl::PointCloud<PointType>());
-        bobPoints->reserve(lidar_msg->points.size());
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_filtered = lidar_msg;
+        if (config_.voxel_leaf_size > 1e-6) {
+            lidar_filtered.reset(new pcl::PointCloud<point_os::PointcloudXYZITR>());
+            pcl::VoxelGrid<point_os::PointcloudXYZITR> voxel;
+            voxel.setLeafSize(config_.voxel_leaf_size, config_.voxel_leaf_size, config_.voxel_leaf_size);
+            voxel.setInputCloud(lidar_msg);
+            voxel.filter(*lidar_filtered);
+        }
 
-        uniformFeatureExtraction(lidar_msg, plannerPoints, config_.filter_point_size, config_.min_range);
+        // if (std::abs(config_.lidar_mount_roll_rad) > 1e-12 ||
+        //     std::abs(config_.lidar_mount_pitch_rad) > 1e-12 ||
+        //     std::abs(config_.lidar_mount_yaw_rad) > 1e-12) {
+        //     const Eigen::Matrix3d mount_R =
+        //         (Eigen::AngleAxisd(config_.lidar_mount_yaw_rad, Eigen::Vector3d::UnitZ()) *
+        //          Eigen::AngleAxisd(config_.lidar_mount_pitch_rad, Eigen::Vector3d::UnitY()) *
+        //          Eigen::AngleAxisd(config_.lidar_mount_roll_rad, Eigen::Vector3d::UnitX()))
+        //             .toRotationMatrix();
+        //     const Eigen::Matrix3d level_R = mount_R.transpose();
+
+        //     for (auto& pt : lidar_filtered->points) {
+        //         Eigen::Vector3d p(pt.x, pt.y, pt.z);
+        //         p = level_R * p;
+        //         pt.x = static_cast<float>(p.x());
+        //         pt.y = static_cast<float>(p.y());
+        //         pt.z = static_cast<float>(p.z());
+        //     }
+        // }
+
+        pcl::PointCloud<PointType>::Ptr plannerPoints(new pcl::PointCloud<PointType>());
+        plannerPoints->reserve(lidar_filtered->points.size());
+        pcl::PointCloud<PointType>::Ptr edgePoints(new pcl::PointCloud<PointType>());
+        edgePoints->reserve(lidar_filtered->points.size());
+        pcl::PointCloud<PointType>::Ptr bobPoints(new pcl::PointCloud<PointType>());
+        bobPoints->reserve(lidar_filtered->points.size());
+
+        uniformFeatureExtraction(lidar_filtered, plannerPoints, config_.filter_point_size, config_.min_range);
         
-        publishTopic(lidar_start_time, lidar_msg, edgePoints, plannerPoints, bobPoints, quaternion);
+        publishTopic(lidar_start_time, lidar_filtered, edgePoints, plannerPoints, bobPoints, quaternion);
     }
 
 
@@ -772,44 +815,156 @@ namespace super_odometry {
     }
 
 
-    void featureExtraction::livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
-    {   
+    // void featureExtraction::livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
+    // {   
+    //     frameCount = frameCount + 1;
+    //     if (frameCount % config_.skipFrame != 0)
+    //         return; 
+
+    //     m_buf.lock();
+        
+    //     pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
+    //         new pcl::PointCloud<point_os::PointcloudXYZITR>());
+        
+    //     pointCloud->points.resize(msg->point_num);
+
+    //     Eigen::Matrix3d rotation_matrix = Eigen::Matrix3d::Identity();
+    //     if (!imuBuf.empty()) {
+    //         rotation_matrix = imu_Init->imu_laser_R_Gravity;
+    //     } 
+        
+    //     if(config_.provide_point_time) {     
+    //         for (uint i=0; i < msg->point_num; i++) {
+    //             if ((msg->points[i].line < config_.N_SCANS) &&
+    //                 ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {   
+    //                 Eigen::Vector3d point(msg->points[i].x, msg->points[i].y, msg->points[i].z);
+    //                 Eigen::Vector3d transformed_point = rotation_matrix * point;
+    //                 pointCloud->points[i].x = transformed_point.x();
+    //                 pointCloud->points[i].y = transformed_point.y();
+    //                 pointCloud->points[i].z = transformed_point.z();
+    //                 pointCloud->points[i].intensity = msg->points[i].reflectivity;
+    //                 pointCloud->points[i].time = msg->points[i].offset_time / float(1000000000);
+    //                 pointCloud->points[i].ring = msg->points[i].line;
+    //             }
+    //         }
+    //     } else {
+    //         RCLCPP_ERROR(this->get_logger(), "Please check yaml or livox driver to provide the timestamp for each point");
+    //         rclcpp::shutdown();
+    //     }
+
+    //     manageLidarBuffer(pointCloud, msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9);
+
+    //     if(IMU_INIT==true or imuBuf.empty())
+    //     {   
+    //         undistortionAndFeatureExtraction();
+    //         double lidar_first_time;
+    //         lidarBuf.getFirstTime(lidar_first_time);
+    //         lidarBuf.clean(lidar_first_time);
+    //     }
+
+    //     m_buf.unlock();
+    // }
+
+    void featureExtraction::livoxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+    {
         frameCount = frameCount + 1;
-        if (frameCount % config_.skipFrame != 0)
-            return; 
+        if (frameCount % config_.skipFrame != 0) {
+            return;
+        }
 
         m_buf.lock();
-        
+
+        if (!config_.provide_point_time) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "livox_pcl2 requires per-point timestamps (set provide_point_time=1 and ensure the driver publishes the `timestamp` field).");
+            rclcpp::shutdown();
+        }
+
+        if (msg->is_bigendian) {
+            RCLCPP_ERROR(this->get_logger(), "Big-endian PointCloud2 is not supported.");
+            rclcpp::shutdown();
+        }
+
+        const std::size_t num_points = static_cast<std::size_t>(msg->width) * static_cast<std::size_t>(msg->height);
+
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
             new pcl::PointCloud<point_os::PointcloudXYZITR>());
-        
-        pointCloud->points.resize(msg->point_num);
+        pointCloud->points.reserve(num_points);
+        pointCloud->is_dense = false;
+
+        auto has_field = [&](const char* name) {
+            for (const auto& f : msg->fields) {
+                if (f.name == name) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!has_field("x") || !has_field("y") || !has_field("z") ||
+            !has_field("intensity") || !has_field("tag") || !has_field("line") || !has_field("timestamp")) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "livox_pcl2 expects fields: x,y,z,intensity,tag,line,timestamp (got a different PointCloud2 layout).");
+            rclcpp::shutdown();
+        }
+
+        const double stamp_sec = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
+        const std::int64_t stamp_ns =
+            static_cast<std::int64_t>(msg->header.stamp.sec) * 1000000000LL +
+            static_cast<std::int64_t>(msg->header.stamp.nanosec);
 
         Eigen::Matrix3d rotation_matrix = Eigen::Matrix3d::Identity();
         if (!imuBuf.empty()) {
             rotation_matrix = imu_Init->imu_laser_R_Gravity;
-        } 
-        
-        if(config_.provide_point_time) {     
-            for (uint i=0; i < msg->point_num; i++) {
-                if ((msg->points[i].line < config_.N_SCANS) &&
-                    ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {   
-                    Eigen::Vector3d point(msg->points[i].x, msg->points[i].y, msg->points[i].z);
-                    Eigen::Vector3d transformed_point = rotation_matrix * point;
-                    pointCloud->points[i].x = transformed_point.x();
-                    pointCloud->points[i].y = transformed_point.y();
-                    pointCloud->points[i].z = transformed_point.z();
-                    pointCloud->points[i].intensity = msg->points[i].reflectivity;
-                    pointCloud->points[i].time = msg->points[i].offset_time / float(1000000000);
-                    pointCloud->points[i].ring = msg->points[i].line;
-                }
-            }
-        } else {
-            RCLCPP_ERROR(this->get_logger(), "Please check yaml or livox driver to provide the timestamp for each point");
-            rclcpp::shutdown();
         }
 
-        manageLidarBuffer(pointCloud, msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9);
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_intensity(*msg, "intensity");
+        sensor_msgs::PointCloud2ConstIterator<uint8_t> iter_tag(*msg, "tag");
+        sensor_msgs::PointCloud2ConstIterator<uint8_t> iter_line(*msg, "line");
+        sensor_msgs::PointCloud2ConstIterator<double> iter_timestamp(*msg, "timestamp");
+
+        for (std::size_t i = 0; i < num_points;
+             ++i, ++iter_x, ++iter_y, ++iter_z, ++iter_intensity, ++iter_tag, ++iter_line, ++iter_timestamp) {
+            const uint8_t line = *iter_line;
+            if (line >= static_cast<uint8_t>(config_.N_SCANS)) {
+                continue;
+            }
+            const uint8_t tag = *iter_tag;
+            if (!(((tag & 0x30) == 0x10) || ((tag & 0x30) == 0x00))) {
+                continue;
+            }
+
+            const std::int64_t point_time_ns = static_cast<std::int64_t>(*iter_timestamp);
+            double point_time_sec = (point_time_ns - stamp_ns) * 1e-9;
+            if (point_time_sec < 0.0) {
+                point_time_sec = 0.0;
+            }
+
+            Eigen::Vector3d point(*iter_x, *iter_y, *iter_z);
+            Eigen::Vector3d transformed_point = rotation_matrix * point;
+
+            point_os::PointcloudXYZITR out;
+            out.x = static_cast<float>(transformed_point.x());
+            out.y = static_cast<float>(transformed_point.y());
+            out.z = static_cast<float>(transformed_point.z());
+            out.intensity = *iter_intensity;
+            out.time = static_cast<float>(point_time_sec);
+            out.ring = line;
+            pointCloud->points.push_back(out);
+        }
+
+        if (pointCloud->points.empty()) {
+            RCLCPP_WARN(this->get_logger(), "livox_pcl2: received an empty/invalid cloud (no points passed filters).");
+            m_buf.unlock();
+            return;
+        }
+
+        pointCloud->width = static_cast<uint32_t>(pointCloud->points.size());
+        pointCloud->height = 1;
+
+        manageLidarBuffer(pointCloud, stamp_sec);
 
         if(IMU_INIT==true or imuBuf.empty())
         {   

@@ -69,6 +69,10 @@ namespace super_odometry {
         float min_range;
         float max_range;
         int filter_point_size;
+        double voxel_leaf_size;
+        double lidar_mount_roll_rad;
+        double lidar_mount_pitch_rad;
+        double lidar_mount_yaw_rad;
         SensorType sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;
@@ -117,7 +121,8 @@ namespace super_odometry {
 
         void laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg);
 
-        void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
+        // void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
+        void livoxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
         void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
             pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);

@@ -571,6 +571,34 @@ namespace super_odometry {
     if (IMU_SENSOR == "vectornav_enu") {
         utils::imu_rfu_to_flu(imu_msg);
     }
+
+    if (config_.imu_sensor == SensorType::VECTORNAV_ENU && config_.use_imu_roll_pitch) {
+        Eigen::Quaterniond q(imu_msg.orientation.w, imu_msg.orientation.x, imu_msg.orientation.y, imu_msg.orientation.z);
+        if (q.norm() > 1e-12) {
+            q.normalize();
+        } else {
+            q.setIdentity();
+        }
+
+        if (!imu_yaw_initialized_) {
+            tf2::Quaternion orientation_curr(q.x(), q.y(), q.z(), q.w());
+            double roll, pitch, yaw;
+            tf2::Matrix3x3(orientation_curr).getRPY(roll, pitch, yaw);
+            tf2::Quaternion yaw_quat;
+            yaw_quat.setRPY(0, 0, -yaw);
+            imu_yaw_correction_ =
+                Eigen::Quaterniond(yaw_quat.w(), yaw_quat.x(), yaw_quat.y(), yaw_quat.z());
+            imu_yaw_correction_.normalize();
+            imu_yaw_initialized_ = true;
+        }
+
+        Eigen::Quaterniond q_zeroed = imu_yaw_correction_ * q;
+        q_zeroed.normalize();
+        imu_msg.orientation.w = q_zeroed.w();
+        imu_msg.orientation.x = q_zeroed.x();
+        imu_msg.orientation.y = q_zeroed.y();
+        imu_msg.orientation.z = q_zeroed.z();
+    }
         
     // 1. Pre-process IMU data
     sensor_msgs::msg::Imu thisImu = imuConverter(imu_msg);

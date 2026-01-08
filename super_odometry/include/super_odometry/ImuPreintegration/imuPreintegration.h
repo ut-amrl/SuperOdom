@@ -195,6 +195,8 @@ namespace super_odometry {
         double lastImuT_imu = -1;
         double lastImuT_opt = -1;
         double last_vectornav_enu_time = -1;
+        bool imu_yaw_initialized_ = false;
+        Eigen::Quaterniond imu_yaw_correction_ = Eigen::Quaterniond::Identity();
         int key = 1;
         int imuPreintegrationResetId = 0;
         int frame_count = 0;

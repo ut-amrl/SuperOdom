@@ -9,6 +9,8 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_broadcaster.h>
@@ -139,6 +141,9 @@ namespace super_odometry {
         
 
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubImuOdometry;
+        rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pubStatePose;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pubStateTwist;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pubStateTwistWf;
         rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pubHealthStatus;
         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubImuPath;
 

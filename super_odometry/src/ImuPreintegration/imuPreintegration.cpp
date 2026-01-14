@@ -50,6 +50,12 @@ namespace super_odometry {
 
         pubImuOdometry = this->create_publisher<nav_msgs::msg::Odometry>(
             ProjectName+"/state_estimation", 10);
+        pubStatePose = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+            ProjectName+"/pose", 10);
+        pubStateTwist = this->create_publisher<geometry_msgs::msg::TwistStamped>(
+            ProjectName+"/twist", 10);
+        pubStateTwistWf = this->create_publisher<geometry_msgs::msg::TwistStamped>(
+            ProjectName + "/twist_wf", 10);
         pubHealthStatus = this->create_publisher<std_msgs::msg::Bool>(
             ProjectName+"/state_estimation_health", 1);
         pubImuPath = this->create_publisher<nav_msgs::msg::Path>(
@@ -700,8 +706,55 @@ void imuPreintegration::publishOdometry(
     prepareOdometryMessage(odometry, thisImu, currentState);
     
     if (frame_count++ % 4 == 0) {
-        pubImuOdometry->publish(odometry);
+    pubImuOdometry->publish(odometry);
     }
+
+    geometry_msgs::msg::PoseStamped pose_msg;
+    pose_msg.header = odometry.header;
+    pose_msg.pose = odometry.pose.pose;
+    pubStatePose->publish(pose_msg);
+
+    geometry_msgs::msg::TwistStamped twist_msg;
+    twist_msg.header = odometry.header;
+    twist_msg.header.frame_id =
+        odometry.child_frame_id.empty() ? odometry.header.frame_id : odometry.child_frame_id;
+    twist_msg.twist = odometry.twist.twist;
+    pubStateTwist->publish(twist_msg);
+
+    geometry_msgs::msg::TwistStamped twist_wf_msg;
+    twist_wf_msg.header = odometry.header;
+    twist_wf_msg.header.frame_id = odometry.header.frame_id;
+    twist_wf_msg.twist.linear.x = currentState.velocity().x();
+    twist_wf_msg.twist.linear.y = currentState.velocity().y();
+    twist_wf_msg.twist.linear.z = currentState.velocity().z();
+
+    Eigen::Quaterniond q_w_curr;
+    if (config_.use_imu_roll_pitch) {
+        q_w_curr = Eigen::Quaterniond(
+            thisImu.orientation.w,
+            thisImu.orientation.x,
+            thisImu.orientation.y,
+            thisImu.orientation.z
+        );
+    } else {
+        q_w_curr = Eigen::Quaterniond(
+            currentState.quaternion().w(),
+            currentState.quaternion().x(),
+            currentState.quaternion().y(),
+            currentState.quaternion().z()
+        );
+    }
+
+    Eigen::Vector3d omega_body(
+        odometry.twist.twist.angular.x,
+        odometry.twist.twist.angular.y,
+        odometry.twist.twist.angular.z
+    );
+    Eigen::Vector3d omega_world = q_w_curr * omega_body;
+    twist_wf_msg.twist.angular.x = omega_world.x();
+    twist_wf_msg.twist.angular.y = omega_world.y();
+    twist_wf_msg.twist.angular.z = omega_world.z();
+    pubStateTwistWf->publish(twist_wf_msg);
 
     // Publish health status
     std_msgs::msg::Bool health_status_msg;
@@ -735,8 +788,8 @@ void imuPreintegration::publishTransform(nav_msgs::msg::Odometry &odometry, cons
     q.setZ(odometry.pose.pose.orientation.z);
     transform.setRotation(q);
     transform_stamped_.transform = tf2::toMsg(transform);
-    if(frame_count%4==0)
-        br.sendTransform(transform_stamped_);
+    // if(frame_count%4==0)
+    br.sendTransform(transform_stamped_);
 }
 
 void imuPreintegration::updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu){

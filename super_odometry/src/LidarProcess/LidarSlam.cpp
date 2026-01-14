@@ -19,12 +19,12 @@ namespace super_odometry {
     }
     void LidarSLAM::initROSInterface(rclcpp::Node::SharedPtr node) {
         node_ = node;
-        pubUncertaintyX=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_X", 1);
-        pubUncertaintyY=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_Y", 1);
-        pubUncertaintyZ=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_Z", 1);
-        pubUncertaintyRoll=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_roll", 1);
-        pubUncertaintyPitch=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_pitch", 1);
-        pubUncertaintyYaw=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_yaw", 1);
+        pubUncertaintyX=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_X", 1);
+        pubUncertaintyY=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_Y", 1);
+        pubUncertaintyZ=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_Z", 1);
+        pubUncertaintyRoll=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_roll", 1);
+        pubUncertaintyPitch=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_pitch", 1);
+        pubUncertaintyYaw=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"/uncertainty_yaw", 1);
     }
 
     void LidarSLAM::Localization(

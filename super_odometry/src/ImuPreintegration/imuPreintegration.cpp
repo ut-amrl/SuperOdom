@@ -49,7 +49,7 @@ namespace super_odometry {
                         std::placeholders::_1), sub_options);
 
         pubImuOdometry = this->create_publisher<nav_msgs::msg::Odometry>(
-            ProjectName+"/state_estimation", 10);
+            ProjectName+"/state_estimation2", 10);
         pubStatePose = this->create_publisher<geometry_msgs::msg::PoseStamped>(
             ProjectName+"/pose", 10);
         pubStateTwist = this->create_publisher<geometry_msgs::msg::TwistStamped>(
@@ -622,6 +622,23 @@ namespace super_odometry {
         return;
     }
 
+
+    // --- FIX START: Integrate the CURRENT measurement ---
+    double dt = config_.imu_dt; 
+    // Ideally use the dt calculated in processTiming, but since that function 
+    // returns void, you may need to recalculate or modify processTiming to return it.
+    double imuTime = secs(&thisImu);
+    if (lastImuT_imu > 0) dt = imuTime - lastImuT_imu;
+    if (dt < 0.001 || dt > 0.5) dt = config_.imu_dt;
+
+    imuIntegratorImu_->integrateMeasurement(
+        gtsam::Vector3(thisImu.linear_acceleration.x, thisImu.linear_acceleration.y, thisImu.linear_acceleration.z),
+        gtsam::Vector3(thisImu.angular_velocity.x,    thisImu.angular_velocity.y,    thisImu.angular_velocity.z), 
+        dt
+    );
+    // --- FIX END ---
+
+
     // 5. Prepare and publish odometry
     gtsam::NavState currentState =imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom);
     nav_msgs::msg::Odometry odometry;
@@ -705,9 +722,9 @@ void imuPreintegration::publishOdometry(
     
     prepareOdometryMessage(odometry, thisImu, currentState);
     
-    if (frame_count++ % 4 == 0) {
+    //if (frame_count++ % 4 == 0) {
     pubImuOdometry->publish(odometry);
-    }
+    //}
 
     geometry_msgs::msg::PoseStamped pose_msg;
     pose_msg.header = odometry.header;

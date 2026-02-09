@@ -116,35 +116,19 @@ Visualization Manager:
         Value: /super_odometry/laser_odometry
       Value: true
     - Class: rviz_default_plugins/TF
-      Enabled: true
+      Enabled: false
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        camera_color_frame:
-          Value: true
-        camera_color_optical_frame:
-          Value: true
-        camera_depth_frame:
-          Value: true
-        camera_depth_optical_frame:
-          Value: true
-        camera_link:
-          Value: true
-        map:
-          Value: true
-        sensor:
-          Value: true
       Marker Scale: 3
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: false
       Tree:
-        map:
-          sensor:
-            {}
+        {}
       Update Interval: 0
-      Value: true
+      Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -286,7 +270,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 20.67071533203125
+      Distance: 14.08651351928711
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -304,7 +288,7 @@ Visualization Manager:
       Pitch: 0.8697965741157532
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 0.42519664764404297
+      Yaw: 0.41019660234451294
     Saved: ~
 Window Geometry:
   Displays:

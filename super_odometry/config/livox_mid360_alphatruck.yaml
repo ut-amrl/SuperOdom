@@ -20,7 +20,7 @@
 
     # Feature Extraction Params
     feature_extraction_node:
-        scan_line: 4 
+        scan_line: 4      # DONT TOUCH
         min_range: 0.2    #<!-- remove too closed points -->
         filter_point_size: 3
         voxel_leaf_size: 0.5
@@ -34,6 +34,7 @@
         mapping_plane_resolution: 0.1
         max_iterations: 5
         max_surface_features: 4000
+        auto_voxel_size: true
 
         # For localization mode
         localization_mode: false
@@ -44,7 +45,8 @@
         init_roll: 0.0
         init_pitch: 0.0
         init_yaw: 0.0 
-
+    
+    # DONT TOUCH
     # IMU Preintegration Params
     imu_preintegration_node:
         lidar_correction_noise: 0.04

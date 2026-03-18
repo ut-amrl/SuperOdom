@@ -75,10 +75,15 @@ namespace super_odometry {
                     std::placeholders::_1), sub_options);
         } //TODO: add this to config
 
-        subImu = this->create_subscription<sensor_msgs::msg::Imu>(
-            IMU_TOPIC, imu_qos, 
-            std::bind(&featureExtraction::imu_Handler, this,
-                        std::placeholders::_1), sub_options);
+        if (!IMU_TOPIC.empty()) {
+            subImu = this->create_subscription<sensor_msgs::msg::Imu>(
+                IMU_TOPIC, imu_qos,
+                std::bind(&featureExtraction::imu_Handler, this,
+                            std::placeholders::_1), sub_options);
+        } else {
+            RCLCPP_WARN(this->get_logger(),
+                        "IMU topic is empty. Feature extraction will run without IMU de-skew.");
+        }
 
         subOdom = this->create_subscription<nav_msgs::msg::Odometry>(
             ODOM_TOPIC, 10, 
@@ -424,6 +429,34 @@ namespace super_odometry {
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg,
         const Eigen::Quaterniond& quaternion)
     {
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_filtered = lidar_msg;
+        if (config_.voxel_leaf_size > 1e-6) {
+            lidar_filtered.reset(new pcl::PointCloud<point_os::PointcloudXYZITR>());
+            pcl::VoxelGrid<point_os::PointcloudXYZITR> voxel;
+            voxel.setLeafSize(config_.voxel_leaf_size, config_.voxel_leaf_size, config_.voxel_leaf_size);
+            voxel.setInputCloud(lidar_msg);
+            voxel.filter(*lidar_filtered);
+        }
+
+        if (std::abs(config_.lidar_mount_roll_rad) > 1e-12 ||
+            std::abs(config_.lidar_mount_pitch_rad) > 1e-12 ||
+            std::abs(config_.lidar_mount_yaw_rad) > 1e-12) {
+            const Eigen::Matrix3d mount_R =
+                (Eigen::AngleAxisd(config_.lidar_mount_yaw_rad, Eigen::Vector3d::UnitZ()) *
+                 Eigen::AngleAxisd(config_.lidar_mount_pitch_rad, Eigen::Vector3d::UnitY()) *
+                 Eigen::AngleAxisd(config_.lidar_mount_roll_rad, Eigen::Vector3d::UnitX()))
+                    .toRotationMatrix();
+            const Eigen::Matrix3d level_R = mount_R.transpose();
+
+            for (auto& pt : lidar_filtered->points) {
+                Eigen::Vector3d p(pt.x, pt.y, pt.z);
+                p = level_R * p;
+                pt.x = static_cast<float>(p.x());
+                pt.y = static_cast<float>(p.y());
+                pt.z = static_cast<float>(p.z());
+            }
+        }
+
         pcl::PointCloud<PointType>::Ptr plannerPoints(new pcl::PointCloud<PointType>());
         plannerPoints->reserve(lidar_msg->points.size());
         pcl::PointCloud<PointType>::Ptr edgePoints(new pcl::PointCloud<PointType>());

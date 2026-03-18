@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    imu_topic: "/imu/data"
+    imu_topic: "/imu"
     laser_topic: "/velodyne_points"
     sensor: "velodyne"
     use_imu_roll_pitch: false
@@ -11,15 +11,19 @@
     sensor_frame: "sensor"
     sensor_frame_rot: "sensor_rot"
 
-    imu_acc_x_limit: 0.5
-    imu_acc_y_limit: 0.2
-    imu_acc_z_limit: 0.4
+    imu_acc_x_limit: 2.0
+    imu_acc_y_limit: 2.0
+    imu_acc_z_limit: 1.0
 
     # Feature Extraction Params
     feature_extraction_node:
         scan_line: 16 
         min_range: 0.2    #<!-- remove too closed points -->
         filter_point_size: 3
+        voxel_leaf_size: 0.5
+        lidar_mount_roll_deg: 0.0
+        lidar_mount_pitch_deg: 0.0
+        lidar_mount_yaw_deg: 0.0
 
     # Laser Mapping Params
     laser_mapping_node:

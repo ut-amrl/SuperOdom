@@ -13,8 +13,13 @@
 #include <vector>
 #include <sophus/so3.hpp>
 
+#ifndef PCL_NO_PRECOMPILE
+#define PCL_NO_PRECOMPILE
+#endif
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/console/print.h>
 
@@ -69,6 +74,10 @@ namespace super_odometry {
         float min_range;
         float max_range;
         int filter_point_size;
+        double voxel_leaf_size;
+        double lidar_mount_roll_rad;
+        double lidar_mount_pitch_rad;
+        double lidar_mount_yaw_rad;
         SensorType sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;

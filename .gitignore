@@ -5,9 +5,9 @@
 ./super_odometry/camke-build-debug
 *.idea
 *.vscode
-./build
-./install
-./log
+./build/
+./install/
+./log/
 __pycache__
 *.pyc
 *.pyo

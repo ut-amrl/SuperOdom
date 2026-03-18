@@ -5,9 +5,17 @@ extrinsicRotation_imu_laser: !!opencv-matrix
   rows: 3
   cols: 3
   dt: d  
-  data: [1., 0., 0.,
-        0., 1., 0.,
-        0., 0., 1.]
+  # data: [1., 0., 0.,
+  #       0., 1., 0.,
+  #       0., 0., 1.]
+  # T^lidar_imu convention (right hand)
+  data: [ -0.9691044,  0.2464987,  0.0086654,
+          0.2465162,  0.9691381,  0.0009969,
+          -0.0081522,  0.0031022, -0.9999620 ]
+  # T^imu_lidar convention (left hand)
+  # data: [ -0.969104,  0.246516, -0.008152,
+  #         0.246499,  0.969138,  0.003102,
+  #         0.008665,  0.000997, -0.999962 ]
   # data: [-1., 0., 0.,
   #       0., 1., 0.,
   #       0., 0., -1.]
@@ -18,7 +26,8 @@ extrinsicTranslation_imu_laser: !!opencv-matrix
   cols: 1
   dt: d
   # data: [0.0, 0.0, 0.0]
-  data: [0.080, 0.029, 0.030]
+  data: [0.359046, 0.337624, 0.048837]
+  # data: [0.265121, -0.41586, 0.045387]
 
 
 imu_laser_rotation_offset: !!opencv-matrix

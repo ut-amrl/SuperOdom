@@ -283,7 +283,8 @@ bool readCalibration(rclcpp::Node::SharedPtr node)
 
 bool readGlobalparam(rclcpp::Node::SharedPtr node)
 {
-    node->declare_parameter<std::string>("imu_topic","imu/data");
+    // Empty IMU topic enables LiDAR-only mode.
+    node->declare_parameter<std::string>("imu_topic","");
     node->declare_parameter<std::string>("laser_topic","velodyne_points");
     node->declare_parameter<std::string>("odom_topic","integrated_to_init");
     node->declare_parameter<std::string>("depthup_topic","/rs_up/depth/cloud_filtered");
@@ -330,7 +331,11 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     }
     
     RCLCPP_INFO(node->get_logger(), "LASER_TOPIC %s", LASER_TOPIC.c_str());
-    RCLCPP_INFO(node->get_logger(), "IMU_TOPIC %s", IMU_TOPIC.c_str());
+    if (IMU_TOPIC.empty()) {
+        RCLCPP_WARN(node->get_logger(), "IMU_TOPIC is empty. Running in LiDAR-only mode.");
+    } else {
+        RCLCPP_INFO(node->get_logger(), "IMU_TOPIC %s", IMU_TOPIC.c_str());
+    }
     RCLCPP_INFO(node->get_logger(), "ODOM_TOPIC %s", ODOM_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "DepthUP_TOPIC %s", DepthUP_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "DepthDown_TOPIC %s", DepthDown_TOPIC.c_str());

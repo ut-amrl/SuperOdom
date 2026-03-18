@@ -73,6 +73,7 @@ link_directories(
   ${OpenCV_LIBRARY_DIRS}
   ${GTSAM_LIBRARY_DIRS}
 )
+add_definitions(${PCL_DEFINITIONS})
 
 set(GTSAM_LIBRARIES gtsam)
 

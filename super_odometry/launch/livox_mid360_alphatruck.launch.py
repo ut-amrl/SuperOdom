@@ -10,6 +10,13 @@ import launch_ros
 def get_share_file(package_name, file_name):
     return os.path.join(get_package_share_directory(package_name), file_name)
 
+WORLD_FRAME = "map"
+WORLD_FRAME_ROT = "map_rot"
+SENSOR_FRAME = "sensor"
+SENSOR_FRAME_ROT = "sensor_rot"
+BASE_LINK_FRAME = "base_link"
+ODOM_TOPIC = "integrated_to_init"
+
 def generate_launch_description():
     config_path = get_share_file(
         package_name="super_odometry",
@@ -19,7 +26,7 @@ def generate_launch_description():
         file_name="config/livox/livox_mid360_calibration_alphatruck.yaml"
     )
     home_directory = os.path.expanduser("~")
-    
+
     config_path_arg = DeclareLaunchArgument(
         "config_file",
         default_value=config_path,
@@ -31,23 +38,23 @@ def generate_launch_description():
     )
     odom_topic_arg = DeclareLaunchArgument(
         "odom_topic",
-        default_value="integrated_to_init"
+        default_value=ODOM_TOPIC,
     )
     world_frame_arg = DeclareLaunchArgument(
         "world_frame",
-        default_value="map",
+        default_value=WORLD_FRAME,
     )
     world_frame_rot_arg = DeclareLaunchArgument(
         "world_frame_rot",
-        default_value="map_rot",
+        default_value=WORLD_FRAME_ROT,
     )
     sensor_frame_arg = DeclareLaunchArgument(
         "sensor_frame",
-        default_value="sensor",
+        default_value=SENSOR_FRAME,
     )
     sensor_frame_rot_arg = DeclareLaunchArgument(
         "sensor_frame_rot",
-        default_value="sensor_rot",
+        default_value=SENSOR_FRAME_ROT,
     )
 
     feature_extraction_node = Node(
@@ -90,7 +97,13 @@ def generate_launch_description():
         }],
     )
 
-    
+    # Bridge sensor frame to URDF base_link (identity transform)
+    sensor_to_base_link = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=["0", "0", "0", "0", "0", "0", SENSOR_FRAME, BASE_LINK_FRAME],
+    )
+
     return LaunchDescription([
         launch_ros.actions.SetParameter(name='use_sim_time', value='true'),
         config_path_arg,
@@ -103,4 +116,5 @@ def generate_launch_description():
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,
+        sensor_to_base_link,
     ])

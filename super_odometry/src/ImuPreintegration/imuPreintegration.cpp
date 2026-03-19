@@ -90,8 +90,10 @@ namespace super_odometry {
         imuIntegratorImu_ = std::make_shared<gtsam::PreintegratedImuMeasurements>(p, prior_imu_bias); // setting up the IMU integration for IMU message
         imuIntegratorOpt_ = std::make_shared<gtsam::PreintegratedImuMeasurements>(p, prior_imu_bias); // setting up the IMU integration for optimization
 
-        // Extrinsic from TF (imu_link -> lidar_link), populated by readCalibration()
-        lidar2Imu = gtsam::Pose3(gtsam::Rot3(imu_laser_R), gtsam::Point3(imu_laser_T));
+        // Extrinsic between the working LiDAR/IMU frames.
+        lidar2Imu = gtsam::Pose3(
+            gtsam::Rot3(T_i_l_working.rot.toRotationMatrix()),
+            gtsam::Point3(T_i_l_working.pos.x(), T_i_l_working.pos.y(), T_i_l_working.pos.z()));
         imu2Lidar = lidar2Imu.inverse();
 
     }
@@ -570,6 +572,9 @@ namespace super_odometry {
     sensor_msgs::msg::Imu imu_msg = *imu_raw;
     if (IMU_SENSOR == "vectornav_enu") {
         utils::imu_rfu_to_flu(imu_msg);
+    }
+    if (USE_BASE_FRAME_ROT_ALIGNMENT) {
+        utils::rotate_imu_to_frame(imu_msg, T_b_i.rot.normalized().toRotationMatrix());
     }
 
     if (config_.imu_sensor == SensorType::VECTORNAV_ENU && config_.use_imu_roll_pitch) {

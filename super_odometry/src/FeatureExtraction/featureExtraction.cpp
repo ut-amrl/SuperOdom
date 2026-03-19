@@ -60,6 +60,10 @@ namespace super_odometry {
             RCLCPP_ERROR(this->get_logger(), "[super_odometry::featureExtraction] Could not read parameters. Exiting...");
             rclcpp::shutdown();
         }
+
+        if (USE_BASE_FRAME_ROT_ALIGNMENT) {
+            config_.level_R = T_b_l.rot.normalized().toRotationMatrix();
+        }
          
         RCLCPP_WARN(this->get_logger(), "config_.skipFrame: %d", config_.skipFrame);
         RCLCPP_INFO(this->get_logger(), "scan line number %d \n", config_.N_SCANS);      
@@ -335,7 +339,7 @@ namespace super_odometry {
     Transformd T_w_original(start_pose.rot, start_pose.pos);
     bool is_imu_data = std::is_same_v<BufferType, Imu::Ptr>;
     Transformd T_w_original_sensor = is_imu_data ? 
-                                    T_w_original * T_i_l : 
+                                    T_w_original * T_i_l_working : 
                                     T_w_original;
 
     q_w_original_l = T_w_original_sensor.rot;
@@ -353,8 +357,11 @@ namespace super_odometry {
         // Transform point
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
-        Transformd T_final = is_imu_data ? 
-                            T_l_i * T_original_current * T_i_l : 
+        // Use the FULL extrinsic (with rotation) for undistortion because
+        // points are still in the lidar frame at this stage. The relative IMU
+        // rotation must be converted to the lidar frame via T_l_i / T_i_l.
+        Transformd T_final = is_imu_data ?
+                            T_l_i * T_original_current * T_i_l :
                             T_original_current;
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
@@ -412,8 +419,8 @@ namespace super_odometry {
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
 
-        Transformd T_final = is_imu_data ? 
-                            T_l_i * T_original_current * T_i_l : 
+        Transformd T_final = is_imu_data ?
+                            T_l_i * T_original_current * T_i_l :
                             T_original_current;
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
@@ -629,6 +636,7 @@ namespace super_odometry {
     Imu::Ptr featureExtraction::createImuData(const ImuMeasurement& measurement) {
         Imu::Ptr imudata = std::make_shared<Imu>();
         imudata->time = measurement.timestamp;
+        imudata->q_w_i = measurement.orientation;
         
         // Handle Livox sensor specific processing
         if(IMU_INIT && config_.imu_sensor == SensorType::LIVOX) {
@@ -708,6 +716,9 @@ namespace super_odometry {
         sensor_msgs::msg::Imu imu_msg = *msg_in;
         if (IMU_SENSOR == "vectornav_enu") {
             utils::imu_rfu_to_flu(imu_msg);
+        }
+        if (USE_BASE_FRAME_ROT_ALIGNMENT) {
+            utils::rotate_imu_to_frame(imu_msg, T_b_i.rot.normalized().toRotationMatrix());
         }
         auto measurement = parseImuMessage(imu_msg);
         

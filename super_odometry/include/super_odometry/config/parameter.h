@@ -62,6 +62,14 @@ extern Transformd T_i_l;
 
 extern Transformd T_l_i;
 
+extern Transformd T_b_l;
+extern Transformd T_l_b;
+extern Transformd T_b_i;
+extern Transformd T_i_b;
+extern Transformd T_i_l_working;
+extern Transformd T_l_i_working;
+extern bool USE_BASE_FRAME_ROT_ALIGNMENT;
+
 extern std::string IMU_FRAME;
 extern std::string LIDAR_FRAME;
 extern std::string BASE_FRAME;
@@ -84,4 +92,3 @@ extern std::string IMU_SENSOR;
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
-

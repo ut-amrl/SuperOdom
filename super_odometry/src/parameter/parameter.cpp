@@ -30,6 +30,13 @@ Eigen::Matrix3d imu_laser_R;
 Eigen::Vector3d imu_laser_T;
 Transformd T_i_l;
 Transformd T_l_i;
+Transformd T_b_l;
+Transformd T_l_b;
+Transformd T_b_i;
+Transformd T_i_b;
+Transformd T_i_l_working;
+Transformd T_l_i_working;
+bool USE_BASE_FRAME_ROT_ALIGNMENT = false;
 
 std::string IMU_FRAME;
 std::string LIDAR_FRAME;
@@ -79,15 +86,47 @@ bool readCalibration(rclcpp::Node::SharedPtr node)
     tf_buffer->setUsingDedicatedThread(true);
     auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer, node, true);
 
+    auto lookup_tf = [&](const std::string &target, const std::string &source,
+                         geometry_msgs::msg::TransformStamped &out_tf) -> bool {
+        if (target == source) {
+            out_tf.header.frame_id = target;
+            out_tf.child_frame_id = source;
+            out_tf.transform.rotation.w = 1.0;
+            out_tf.transform.rotation.x = 0.0;
+            out_tf.transform.rotation.y = 0.0;
+            out_tf.transform.rotation.z = 0.0;
+            out_tf.transform.translation.x = 0.0;
+            out_tf.transform.translation.y = 0.0;
+            out_tf.transform.translation.z = 0.0;
+            return true;
+        }
+        try {
+            out_tf = tf_buffer->lookupTransform(
+                target, source, tf2::TimePointZero, std::chrono::seconds(10));
+            return true;
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN(node->get_logger(),
+                        "Could not get TF %s -> %s: %s",
+                        target.c_str(), source.c_str(), ex.what());
+            return false;
+        }
+    };
+
+    auto tf_to_transformd = [](const geometry_msgs::msg::TransformStamped &tf_msg) -> Transformd {
+        const auto &rot = tf_msg.transform.rotation;
+        const auto &trans = tf_msg.transform.translation;
+        Eigen::Quaterniond q(rot.w, rot.x, rot.y, rot.z);
+        return Transformd(
+            q.normalized().toRotationMatrix(),
+            Eigen::Vector3d(trans.x, trans.y, trans.z));
+    };
+
     // Look up imu_frame -> lidar_frame transform (T_i_l)
     geometry_msgs::msg::TransformStamped tf_imu_lidar;
-    try {
-        tf_imu_lidar = tf_buffer->lookupTransform(
-            IMU_FRAME, LIDAR_FRAME, tf2::TimePointZero, std::chrono::seconds(10));
-    } catch (const tf2::TransformException &ex) {
+    if (!lookup_tf(IMU_FRAME, LIDAR_FRAME, tf_imu_lidar)) {
         RCLCPP_ERROR(node->get_logger(),
-                     "Could not get TF %s -> %s: %s. Is robot_state_publisher running?",
-                     IMU_FRAME.c_str(), LIDAR_FRAME.c_str(), ex.what());
+                     "Could not get TF %s -> %s. Is robot_state_publisher running?",
+                     IMU_FRAME.c_str(), LIDAR_FRAME.c_str());
         return false;
     }
 
@@ -113,6 +152,41 @@ bool readCalibration(rclcpp::Node::SharedPtr node)
                 imu_laser_T.x(), imu_laser_T.y(), imu_laser_T.z());
     RCLCPP_INFO_STREAM(node->get_logger(), GREEN BOLD "T_i_l Extrinsic:\n" RESET << T_i_l.matrix());
     RCLCPP_INFO_STREAM(node->get_logger(), GREEN BOLD "T_l_i Extrinsic:\n" RESET << T_l_i.matrix());
+
+    // Base-frame alignment transforms (rotation-first sensor normalization)
+    geometry_msgs::msg::TransformStamped tf_base_lidar;
+    geometry_msgs::msg::TransformStamped tf_base_imu;
+    const bool got_base_lidar = lookup_tf(BASE_FRAME, LIDAR_FRAME, tf_base_lidar);
+    const bool got_base_imu = lookup_tf(BASE_FRAME, IMU_FRAME, tf_base_imu);
+
+    if (got_base_lidar && got_base_imu) {
+        T_b_l = tf_to_transformd(tf_base_lidar);
+        T_l_b = T_b_l.inverse();
+        T_b_i = tf_to_transformd(tf_base_imu);
+        T_i_b = T_b_i.inverse();
+        T_i_l_working = Transformd(
+            Eigen::Matrix3d::Identity(),
+            T_b_l.pos - T_b_i.pos);
+        T_l_i_working = T_i_l_working.inverse();
+        USE_BASE_FRAME_ROT_ALIGNMENT = true;
+
+        RCLCPP_INFO(node->get_logger(),
+                    GREEN BOLD "Base-frame rotation alignment enabled using TF (%s)." RESET,
+                    BASE_FRAME.c_str());
+        RCLCPP_INFO_STREAM(node->get_logger(),
+                           GREEN BOLD "Working rectified T_i_l:\n" RESET
+                               << T_i_l_working.matrix());
+    } else {
+        T_b_l = Transformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
+        T_l_b = T_b_l.inverse();
+        T_b_i = Transformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
+        T_i_b = T_b_i.inverse();
+        T_i_l_working = T_i_l;
+        T_l_i_working = T_l_i;
+        USE_BASE_FRAME_ROT_ALIGNMENT = false;
+        RCLCPP_WARN(node->get_logger(),
+                    "Base-frame TF lookup incomplete. Running without base-frame rotation alignment.");
+    }
 
     return true;
 }

@@ -286,9 +286,11 @@ void laserMapping::initializeFirstFrame(){
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
-        auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
-        q_extrinsic.normalize();
-        q_w_curr=q_extrinsic.inverse()*q_w_curr;
+        if (!USE_BASE_FRAME_ROT_ALIGNMENT) {
+            auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
+            q_extrinsic.normalize();
+            q_w_curr=q_extrinsic.inverse()*q_w_curr;
+        }
         
         
     }else{
@@ -730,7 +732,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
     void laserMapping::updatePoseAndPublish(){
 
-        //1. Update pose 
+        //1. Update pose
         q_w_curr=slam.T_w_lidar.rot;
         t_w_curr=slam.T_w_lidar.pos;
         T_w_lidar.rot=slam.T_w_lidar.rot;
@@ -740,6 +742,17 @@ return PredictionSource::CONSTANT_VELOCITY;
         slam.frame_count=frameCount;
         slam.laser_imu_sync=laser_imu_sync;
         initialization = true;
+
+        // DEBUG: Print laser_odometry pose to check for tilt
+        if (frameCount % 10 == 0) {
+            double roll, pitch, yaw;
+            tf2::Quaternion q_debug(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w());
+            tf2::Matrix3x3(q_debug).getRPY(roll, pitch, yaw);
+            RCLCPP_INFO(this->get_logger(),
+                "[DEBUG] laser_odom frame=%d pos=[%.3f, %.3f, %.3f] rpy=[%.2f, %.2f, %.2f] deg",
+                frameCount, t_w_curr.x(), t_w_curr.y(), t_w_curr.z(),
+                roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI);
+        }
 
         // Calculate linear and angular velocity
         double dt = timeLaserOdometry - timeLaserOdometryPrev;

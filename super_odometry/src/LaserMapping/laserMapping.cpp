@@ -41,6 +41,7 @@ namespace super_odometry {
             RCLCPP_ERROR(this->get_logger(), "[AriseSlam::laserMapping] Could not read parameters. Exiting...");
             rclcpp::shutdown();
         }
+        publishRectifiedWorkingFrames(shared_from_this());
 
         RCLCPP_INFO(this->get_logger(), "DEBUG VIEW: %d", config_.debug_view_enabled);
         RCLCPP_INFO(this->get_logger(), "ENABLE OUSTER DATA: %d", config_.enable_ouster_data);
@@ -414,6 +415,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 }
 
     void laserMapping::publishTopic(){
+        const std::string &output_lidar_frame = getWorkingLidarFrameId();
 
         TicToc t_pub;
         std_msgs::msg::String prediction_source_msg;
@@ -506,7 +508,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
         nav_msgs::msg::Odometry odomAftMapped;
         odomAftMapped.header.frame_id = WORLD_FRAME;
-        odomAftMapped.child_frame_id = SENSOR_FRAME;
+        odomAftMapped.child_frame_id = output_lidar_frame;
         odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
 
         odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -532,7 +534,7 @@ return PredictionSource::CONSTANT_VELOCITY;
         {
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
+            laserOdomIncremental.child_frame_id = output_lidar_frame;
             laserOdomIncremental.pose.pose.position.x = t_w_curr.x();
             laserOdomIncremental.pose.pose.position.y = t_w_curr.y();
             laserOdomIncremental.pose.pose.position.z = t_w_curr.z();
@@ -549,7 +551,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
+            laserOdomIncremental.child_frame_id = output_lidar_frame;
             laserOdomIncremental.pose.pose.position.x = laser_incremental_T.pos.x();
             laserOdomIncremental.pose.pose.position.y = laser_incremental_T.pos.y();
             laserOdomIncremental.pose.pose.position.z = laser_incremental_T.pos.z();

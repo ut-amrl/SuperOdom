@@ -124,8 +124,8 @@ namespace super_odometry {
         // void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
         void livoxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
-        void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
-            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);
+        void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in,
+            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float min_range, float max_range);
 
         void assignTimeforPointCloud(pcl::PointCloud<PointType>::Ptr laserCloudIn_ptr_);
         

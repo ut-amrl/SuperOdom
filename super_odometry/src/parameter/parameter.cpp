@@ -23,6 +23,8 @@ std::string WORLD_FRAME;
 std::string WORLD_FRAME_ROT;
 std::string SENSOR_FRAME;
 std::string SENSOR_FRAME_ROT;
+std::string LIDAR_FRAME_RECT;
+std::string IMU_FRAME_RECT;
 SensorType lidar_sensor;
 SensorType imu_sensor;
 
@@ -191,6 +193,48 @@ bool readCalibration(rclcpp::Node::SharedPtr node)
     return true;
 }
 
+void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node)
+{
+    if (!USE_BASE_FRAME_ROT_ALIGNMENT) {
+        return;
+    }
+
+    static auto static_broadcaster =
+        std::make_shared<tf2_ros::StaticTransformBroadcaster>(node);
+
+    auto make_rectified_tf =
+        [&](const std::string &child_frame, const Eigen::Vector3d &translation)
+            -> geometry_msgs::msg::TransformStamped {
+        geometry_msgs::msg::TransformStamped tf_msg;
+        tf_msg.header.stamp = node->get_clock()->now();
+        tf_msg.header.frame_id = BASE_FRAME;
+        tf_msg.child_frame_id = child_frame;
+        tf_msg.transform.translation.x = translation.x();
+        tf_msg.transform.translation.y = translation.y();
+        tf_msg.transform.translation.z = translation.z();
+        tf_msg.transform.rotation.w = 1.0;
+        tf_msg.transform.rotation.x = 0.0;
+        tf_msg.transform.rotation.y = 0.0;
+        tf_msg.transform.rotation.z = 0.0;
+        return tf_msg;
+    };
+
+    std::vector<geometry_msgs::msg::TransformStamped> transforms;
+    transforms.push_back(make_rectified_tf(LIDAR_FRAME_RECT, T_b_l.pos));
+    transforms.push_back(make_rectified_tf(IMU_FRAME_RECT, T_b_i.pos));
+    static_broadcaster->sendTransform(transforms);
+}
+
+const std::string& getWorkingLidarFrameId()
+{
+    return USE_BASE_FRAME_ROT_ALIGNMENT ? LIDAR_FRAME_RECT : LIDAR_FRAME;
+}
+
+const std::string& getWorkingImuFrameId()
+{
+    return USE_BASE_FRAME_ROT_ALIGNMENT ? IMU_FRAME_RECT : IMU_FRAME;
+}
+
 bool readGlobalparam(rclcpp::Node::SharedPtr node)
 {
     node->declare_parameter<std::string>("imu_topic","imu/data");
@@ -239,6 +283,8 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     IMU_FRAME = node->get_parameter("imu_frame").as_string();
     LIDAR_FRAME = node->get_parameter("lidar_frame").as_string();
     BASE_FRAME = node->get_parameter("base_frame").as_string();
+    LIDAR_FRAME_RECT = LIDAR_FRAME + "_rect";
+    IMU_FRAME_RECT = IMU_FRAME + "_rect";
     //check whether sensor is support 
     const std::unordered_map<std::string, SensorType> sensorTypeMap = {
         {"velodyne", SensorType::VELODYNE},
@@ -268,6 +314,8 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     RCLCPP_INFO(node->get_logger(), "WORLD_FRAME_ROT %s", WORLD_FRAME_ROT.c_str());
     RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME %s", SENSOR_FRAME.c_str());
     RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME_ROT %s", SENSOR_FRAME_ROT.c_str());
+    RCLCPP_INFO(node->get_logger(), "LIDAR_FRAME_RECT %s", LIDAR_FRAME_RECT.c_str());
+    RCLCPP_INFO(node->get_logger(), "IMU_FRAME_RECT %s", IMU_FRAME_RECT.c_str());
     RCLCPP_INFO(node->get_logger(), "ProjectName %s", ProjectName.c_str());
     RCLCPP_INFO(node->get_logger(), "LIDAR_SENSOR %s", LIDAR_SENSOR.c_str());
     RCLCPP_INFO(node->get_logger(), "IMU_SENSOR %s", IMU_SENSOR.c_str());

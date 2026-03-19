@@ -60,6 +60,7 @@ namespace super_odometry {
             RCLCPP_ERROR(this->get_logger(), "[super_odometry::featureExtraction] Could not read parameters. Exiting...");
             rclcpp::shutdown();
         }
+        publishRectifiedWorkingFrames(shared_from_this());
 
         if (USE_BASE_FRAME_ROT_ALIGNMENT) {
             config_.level_R = T_b_l.rot.normalized().toRotationMatrix();
@@ -355,17 +356,13 @@ namespace super_odometry {
         Transformd point_pose = getInterpolatedPoseAtTime(point_time);
         
         // Transform point
+        // Both lidar points and IMU data are already in base frame,
+        // so just apply the relative transform directly.
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
-        // Use the FULL extrinsic (with rotation) for undistortion because
-        // points are still in the lidar frame at this stage. The relative IMU
-        // rotation must be converted to the lidar frame via T_l_i / T_i_l.
-        Transformd T_final = is_imu_data ?
-                            T_l_i * T_original_current * T_i_l :
-                            T_original_current;
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
-        pt = T_final * pt;
+        pt = T_original_current * pt;
             
         point.x = pt.x();
         point.y = pt.y();
@@ -416,15 +413,13 @@ namespace super_odometry {
         const Transformd& point_pose,
         bool is_imu_data)
     {
+        // Both lidar points and IMU data are already in base frame,
+        // so just apply the relative transform directly.
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
 
-        Transformd T_final = is_imu_data ?
-                            T_l_i * T_original_current * T_i_l :
-                            T_original_current;
-
         Eigen::Vector3d pt(point.x, point.y, point.z);
-        return T_final * pt;
+        return T_original_current * pt;
     }
 
     void featureExtraction::updatePointPosition(point_os::PointcloudXYZITR& point, const Eigen::Vector3d& new_pos) {
@@ -453,6 +448,7 @@ namespace super_odometry {
                                          pcl::PointCloud<PointType>::Ptr depthPoints,
                                          Eigen::Quaterniond q_w_original_l)
     {
+        const std::string &working_lidar_frame = getWorkingLidarFrameId();
         FeatureHeader.frame_id = WORLD_FRAME;
         FeatureHeader.stamp = rclcpp::Time(lidar_start_time*1e9);
         laserFeature.header = FeatureHeader;
@@ -460,10 +456,10 @@ namespace super_odometry {
         laserFeature.odom_available = false;
 
       
-        laserFeature.cloud_nodistortion = publishCloud<point_os::PointcloudXYZITR>(pubLaserCloud, laser_no_distortion_points, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_corner = publishCloud<PointType>(pubEdgePoints, edgePoints, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_surface = publishCloud<PointType>(pubPlannerPoints, plannerPoints, FeatureHeader.stamp, SENSOR_FRAME);
-        laserFeature.cloud_realsense=publishCloud<PointType>(pubBobPoints, depthPoints, FeatureHeader.stamp, SENSOR_FRAME);
+        laserFeature.cloud_nodistortion = publishCloud<point_os::PointcloudXYZITR>(pubLaserCloud, laser_no_distortion_points, FeatureHeader.stamp, working_lidar_frame);
+        laserFeature.cloud_corner = publishCloud<PointType>(pubEdgePoints, edgePoints, FeatureHeader.stamp, working_lidar_frame);
+        laserFeature.cloud_surface = publishCloud<PointType>(pubPlannerPoints, plannerPoints, FeatureHeader.stamp, working_lidar_frame);
+        laserFeature.cloud_realsense=publishCloud<PointType>(pubBobPoints, depthPoints, FeatureHeader.stamp, working_lidar_frame);
        
         laserFeature.initial_quaternion_x = q_w_original_l.x();
         laserFeature.initial_quaternion_y = q_w_original_l.y();
@@ -484,6 +480,7 @@ namespace super_odometry {
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg,
         const Eigen::Quaterniond& quaternion)
     {
+        // Points are already in base frame (leveled before undistortion)
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_filtered = lidar_msg;
         if (config_.voxel_leaf_size > 1e-6) {
             lidar_filtered.reset(new pcl::PointCloud<point_os::PointcloudXYZITR>());
@@ -493,27 +490,38 @@ namespace super_odometry {
             voxel.filter(*lidar_filtered);
         }
 
-        // Apply leveling rotation (from TF: base_link -> lidar_link)
-        if (!config_.level_R.isIdentity(1e-12)) {
-            for (auto& pt : lidar_filtered->points) {
-                Eigen::Vector3d p(pt.x, pt.y, pt.z);
-                p = config_.level_R * p;
-                pt.x = static_cast<float>(p.x());
-                pt.y = static_cast<float>(p.y());
-                pt.z = static_cast<float>(p.z());
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr lidar_range_filtered(
+            new pcl::PointCloud<point_os::PointcloudXYZITR>());
+        lidar_range_filtered->reserve(lidar_filtered->points.size());
+
+        const float min_range_sq = config_.min_range * config_.min_range;
+        const float max_range_sq = config_.max_range > 0.0f
+            ? config_.max_range * config_.max_range
+            : std::numeric_limits<float>::infinity();
+
+        for (const auto &pt : lidar_filtered->points) {
+            const float range_sq = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
+            if (range_sq < min_range_sq || range_sq > max_range_sq) {
+                continue;
             }
+            lidar_range_filtered->push_back(pt);
         }
+        lidar_range_filtered->width = static_cast<uint32_t>(lidar_range_filtered->points.size());
+        lidar_range_filtered->height = 1;
+        lidar_range_filtered->is_dense = false;
 
         pcl::PointCloud<PointType>::Ptr plannerPoints(new pcl::PointCloud<PointType>());
-        plannerPoints->reserve(lidar_filtered->points.size());
+        plannerPoints->reserve(lidar_range_filtered->points.size());
         pcl::PointCloud<PointType>::Ptr edgePoints(new pcl::PointCloud<PointType>());
-        edgePoints->reserve(lidar_filtered->points.size());
+        edgePoints->reserve(lidar_range_filtered->points.size());
         pcl::PointCloud<PointType>::Ptr bobPoints(new pcl::PointCloud<PointType>());
-        bobPoints->reserve(lidar_filtered->points.size());
+        bobPoints->reserve(lidar_range_filtered->points.size());
 
-        uniformFeatureExtraction(lidar_filtered, plannerPoints, config_.filter_point_size, config_.min_range);
+        uniformFeatureExtraction(
+            lidar_range_filtered, plannerPoints, config_.filter_point_size,
+            config_.min_range, config_.max_range);
         
-        publishTopic(lidar_start_time, lidar_filtered, edgePoints, plannerPoints, bobPoints, quaternion);
+        publishTopic(lidar_start_time, lidar_range_filtered, edgePoints, plannerPoints, bobPoints, quaternion);
     }
 
 
@@ -549,11 +557,10 @@ namespace super_odometry {
 
             if (LASER_IMU_SYNC_SCCUESS == true and LASER_CAMERA_SYNC_SUCCESS == false)
             {
-                // RCLCPP_INFO(this->get_logger(), "\033[1;32m----> IMU and laserscan is synchronized!.\033[0m");
                 removePointDistortion<Imu::Ptr>(lidar_start_time, lidar_end_time, imuBuf, lidar_msg);
             }
 
-            // Extract features and publish
+            // Step 3: Extract features and publish (points already in base frame)
             extractFeatures(lidar_start_time, lidar_msg, q_w_original_l);
 
             LASER_CAMERA_SYNC_SUCCESS = false;
@@ -570,8 +577,8 @@ namespace super_odometry {
 
             RCLCPP_INFO(this->get_logger(), "\033[1;32m----> no IMU data, running LiDAR Odometry only.\033[0m");
             Eigen::Quaterniond default_quaternion = Eigen::Quaterniond::Identity();
-            
-            // Extract features and publish with default quaternion
+
+            // Extract features and publish (points already in base frame)
             extractFeatures(lidar_start_time, lidar_msg, default_quaternion);
         }
         else
@@ -581,9 +588,14 @@ namespace super_odometry {
         
     }
 
-    void featureExtraction::uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
-        pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range)
+    void featureExtraction::uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in,
+        pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float min_range, float max_range)
     {   
+        const float min_range_sq = min_range * min_range;
+        const float max_range_sq = max_range > 0.0f
+            ? max_range * max_range
+            : std::numeric_limits<float>::infinity();
+
         for (uint i=1; i <(int)pc_in->points.size(); i+=skip_num)
         {   
             pcl::PointXYZI point;
@@ -592,10 +604,16 @@ namespace super_odometry {
             point.z=pc_in->points[i].z;
             point.intensity=pc_in->points[i].time;
 
-            if ((abs(pc_in->points[i].x - pc_in->points[i-1].x) > 1e-7)
+            const float range_sq =
+                pc_in->points[i].x * pc_in->points[i].x +
+                pc_in->points[i].y * pc_in->points[i].y +
+                pc_in->points[i].z * pc_in->points[i].z;
+
+            if (((abs(pc_in->points[i].x - pc_in->points[i-1].x) > 1e-7)
                 || (abs(pc_in->points[i].y - pc_in->points[i-1].y) > 1e-7)
-                || (abs(pc_in->points[i].z - pc_in->points[i-1].z) > 1e-7)
-                && (pc_in->points[i].x * pc_in->points[i].x + pc_in->points[i].y * pc_in->points[i].y + pc_in->points[i].z * pc_in->points[i].z > (block_range * block_range)))
+                || (abs(pc_in->points[i].z - pc_in->points[i-1].z) > 1e-7))
+                && range_sq >= min_range_sq
+                && range_sq <= max_range_sq)
             {
                 pc_out_surf->push_back(point);
             }
@@ -720,6 +738,7 @@ namespace super_odometry {
         if (USE_BASE_FRAME_ROT_ALIGNMENT) {
             utils::rotate_imu_to_frame(imu_msg, T_b_i.rot.normalized().toRotationMatrix());
         }
+        imu_msg.header.frame_id = getWorkingImuFrameId();
         auto measurement = parseImuMessage(imu_msg);
         
         calculateDeltaTime(measurement.timestamp);
@@ -818,6 +837,17 @@ namespace super_odometry {
 
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
             new pcl::PointCloud<point_os::PointcloudXYZITR>());
+        auto rectify_point_cloud = [&](pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &cloud) {
+            if (USE_BASE_FRAME_ROT_ALIGNMENT && !config_.level_R.isIdentity(1e-12)) {
+                for (auto &pt : cloud->points) {
+                    Eigen::Vector3d p(pt.x, pt.y, pt.z);
+                    p = config_.level_R * p;
+                    pt.x = static_cast<float>(p.x());
+                    pt.y = static_cast<float>(p.y());
+                    pt.z = static_cast<float>(p.z());
+                }
+            }
+        };
         
         tmpOusterCloudIn.reset(new pcl::PointCloud<point_os::OusterPointXYZIRT>());
 
@@ -862,6 +892,8 @@ namespace super_odometry {
             assignTimeforPointCloud(laserCloudIn_ptr_);
             pointCloud = pointCloudwithTime;
         }
+
+        rectify_point_cloud(pointCloud);
 
         manageLidarBuffer(pointCloud, laserCloudMsg->header.stamp.sec + laserCloudMsg->header.stamp.nanosec * 1e-9);
 
@@ -975,7 +1007,9 @@ namespace super_odometry {
             static_cast<std::int64_t>(msg->header.stamp.nanosec);
 
         Eigen::Matrix3d rotation_matrix = Eigen::Matrix3d::Identity();
-        if (!imuBuf.empty()) {
+        if (USE_BASE_FRAME_ROT_ALIGNMENT) {
+            rotation_matrix = config_.level_R;
+        } else if (!imuBuf.empty() && config_.imu_sensor == SensorType::LIVOX) {
             rotation_matrix = imu_Init->imu_laser_R_Gravity;
         }
 

@@ -17,6 +17,7 @@
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2/transform_datatypes.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
@@ -51,6 +52,8 @@ extern std::string WORLD_FRAME;
 extern std::string WORLD_FRAME_ROT;
 extern std::string SENSOR_FRAME;
 extern std::string SENSOR_FRAME_ROT;
+extern std::string LIDAR_FRAME_RECT;
+extern std::string IMU_FRAME_RECT;
 extern SensorType lidar_sensor;
 extern SensorType imu_sensor;
 
@@ -92,3 +95,9 @@ extern std::string IMU_SENSOR;
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
+
+void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node);
+
+const std::string& getWorkingLidarFrameId();
+
+const std::string& getWorkingImuFrameId();

@@ -35,6 +35,7 @@ namespace super_odometry {
             RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::imuPreintegration] Could not read calibration parameters. Exiting...");
             rclcpp::shutdown();
         }
+        publishRectifiedWorkingFrames(shared_from_this());
 
         RCLCPP_INFO(this->get_logger(), "[SuperOdometry::imuPreintegration] use_imu_rol_pitch:  %d", config_.use_imu_roll_pitch);
 
@@ -504,7 +505,7 @@ namespace super_odometry {
         sensor_msgs::msg::Imu imu_out = imu_in;
         
         Eigen::Matrix3d imu_laser_R_Gravity;
-        imu_laser_R_Gravity=imu_Init->imu_laser_R_Gravity;
+        imu_laser_R_Gravity = imu_Init->imu_laser_R_Gravity;
 
         // Rotate gyro, acc, and orientation only when the IMU is Livox.
         // rotate gyroscope
@@ -522,7 +523,9 @@ namespace super_odometry {
                             imu_in.linear_acceleration.z);
 
         acc=imu_laser_R_Gravity*acc;
-        acc = acc + ((gyr - gyr_pre) * 1 / config_.imu_dt).cross(- imu_laser_T) + gyr.cross(gyr.cross(-imu_laser_T));
+        const Eigen::Vector3d working_imu_lidar_t = T_i_l_working.pos;
+        acc = acc + ((gyr - gyr_pre) * 1 / config_.imu_dt).cross(-working_imu_lidar_t)
+            + gyr.cross(gyr.cross(-working_imu_lidar_t));
         imu_out.linear_acceleration.x = acc.x();
         imu_out.linear_acceleration.y = acc.y();
         imu_out.linear_acceleration.z = acc.z();
@@ -576,6 +579,7 @@ namespace super_odometry {
     if (USE_BASE_FRAME_ROT_ALIGNMENT) {
         utils::rotate_imu_to_frame(imu_msg, T_b_i.rot.normalized().toRotationMatrix());
     }
+    imu_msg.header.frame_id = getWorkingImuFrameId();
 
     if (config_.imu_sensor == SensorType::VECTORNAV_ENU && config_.use_imu_roll_pitch) {
         Eigen::Quaterniond q(imu_msg.orientation.w, imu_msg.orientation.x, imu_msg.orientation.y, imu_msg.orientation.z);
@@ -791,8 +795,9 @@ void imuPreintegration::publishTransform(nav_msgs::msg::Odometry &odometry, cons
     geometry_msgs::msg::TransformStamped transform_stamped_;
     tf2::Transform transform;
     transform_stamped_.header.stamp  = thisImu.header.stamp;
-    transform_stamped_.header.frame_id = WORLD_FRAME;
-    transform_stamped_.child_frame_id = SENSOR_FRAME;
+    transform_stamped_.header.frame_id = odometry.header.frame_id;
+    transform_stamped_.child_frame_id =
+        odometry.child_frame_id.empty() ? getWorkingLidarFrameId() : odometry.child_frame_id;
     
     tf2::Quaternion q;
     transform.setOrigin(tf2::Vector3(odometry.pose.pose.position.x, 
@@ -855,7 +860,7 @@ const sensor_msgs::msg::Imu &thisImu, const gtsam::NavState &currentState){
     
     odometry.header.stamp = thisImu.header.stamp;
     odometry.header.frame_id = WORLD_FRAME;
-    odometry.child_frame_id = SENSOR_FRAME;
+    odometry.child_frame_id = getWorkingLidarFrameId();
     
     Eigen::Quaterniond q_w_lidar(lidarPoseOpt.rotation().toQuaternion().w(), lidarPoseOpt.rotation().toQuaternion().x(),
                                     lidarPoseOpt.rotation().toQuaternion().y(), lidarPoseOpt.rotation().toQuaternion().z());

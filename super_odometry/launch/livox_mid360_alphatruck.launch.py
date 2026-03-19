@@ -84,13 +84,6 @@ def generate_launch_description():
         parameters=[LaunchConfiguration("config_file")],
     )
 
-    # Bridge sensor frame to URDF base_link (identity transform)
-    sensor_to_base_link = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        arguments=["0", "0", "0", "0", "0", "0", SENSOR_FRAME, BASE_LINK_FRAME],
-    )
-
     return LaunchDescription([
         launch_ros.actions.SetParameter(name='use_sim_time', value='true'),
         config_path_arg,
@@ -102,5 +95,4 @@ def generate_launch_description():
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,
-        sensor_to_base_link,
     ])

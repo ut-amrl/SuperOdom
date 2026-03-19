@@ -171,9 +171,7 @@ namespace super_odometry {
 
 
     public:
-        //Modify the extrinsic matrxi between laser and imu, laser and camera
-        gtsam::Pose3 imu2cam;
-        gtsam::Pose3 cam2Lidar;
+        // Extrinsic transforms between laser and imu (from TF/URDF)
         gtsam::Pose3 imu2Lidar;
         gtsam::Pose3 lidar2Imu;
 

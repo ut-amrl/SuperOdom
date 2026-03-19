@@ -21,20 +21,12 @@ def generate_launch_description():
     config_path = get_share_file(
         package_name="super_odometry",
         file_name="config/livox_mid360_alphatruck.yaml")
-    calib_path = get_share_file(
-        package_name="super_odometry",
-        file_name="config/livox/livox_mid360_calibration_alphatruck.yaml"
-    )
     home_directory = os.path.expanduser("~")
 
     config_path_arg = DeclareLaunchArgument(
         "config_file",
         default_value=config_path,
         description="Path to config file for super_odometry"
-    )
-    calib_path_arg = DeclareLaunchArgument(
-        "calibration_file",
-        default_value=calib_path,
     )
     odom_topic_arg = DeclareLaunchArgument(
         "odom_topic",
@@ -64,9 +56,7 @@ def generate_launch_description():
             "stdout": "screen",
             "stderr": "screen",
         },
-        parameters=[LaunchConfiguration("config_file"),
-            { "calibration_file": LaunchConfiguration("calibration_file"),
-        }],
+        parameters=[LaunchConfiguration("config_file")],
     )
 
     laser_mapping_node = Node(
@@ -77,8 +67,7 @@ def generate_launch_description():
             "stderr": "screen",
         },
         parameters=[LaunchConfiguration("config_file"),
-            { "calibration_file": LaunchConfiguration("calibration_file"),
-             "map_dir": os.path.join(home_directory, "/path/to/your/pcd"),
+            { "map_dir": os.path.join(home_directory, "/path/to/your/pcd"),
         }],
         remappings=[
             ("laser_odom_to_init", LaunchConfiguration("odom_topic")),
@@ -92,9 +81,7 @@ def generate_launch_description():
             "stdout": "screen",
             "stderr": "screen",
         },
-        parameters=[LaunchConfiguration("config_file"),
-            { "calibration_file": LaunchConfiguration("calibration_file")
-        }],
+        parameters=[LaunchConfiguration("config_file")],
     )
 
     # Bridge sensor frame to URDF base_link (identity transform)
@@ -107,7 +94,6 @@ def generate_launch_description():
     return LaunchDescription([
         launch_ros.actions.SetParameter(name='use_sim_time', value='true'),
         config_path_arg,
-        calib_path_arg,
         odom_topic_arg,
         world_frame_arg,
         world_frame_rot_arg,

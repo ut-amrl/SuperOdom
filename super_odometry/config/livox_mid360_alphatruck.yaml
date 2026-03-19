@@ -14,6 +14,12 @@
     sensor_frame: "sensor"
     sensor_frame_rot: "sensor_rot"
 
+    # TF frame names (from URDF) for extrinsic lookups
+    imu_frame: "imu_link"
+    lidar_frame: "lidar_link"
+    base_frame: "base_link"
+    yaw_ratio: 0.0
+
     imu_acc_x_limit: 2.0
     imu_acc_y_limit: 2.0
     imu_acc_z_limit: 2.0
@@ -24,9 +30,6 @@
         min_range: 0.2    #<!-- remove too closed points -->
         filter_point_size: 3
         voxel_leaf_size: 0.5
-        lidar_mount_roll_deg: 0.0
-        lidar_mount_pitch_deg: -14.3 # pitched forward
-        lidar_mount_yaw_deg: 0.0
 
     # Laser Mapping Params
     laser_mapping_node:

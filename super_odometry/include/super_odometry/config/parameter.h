@@ -19,6 +19,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/transform_datatypes.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
 
 #include <algorithm>
 #include <array>
@@ -53,57 +54,17 @@ extern std::string SENSOR_FRAME_ROT;
 extern SensorType lidar_sensor;
 extern SensorType imu_sensor;
 
-extern int PROVIDE_IMU_LASER_EXTRINSIC;
-
-extern std::vector<Eigen::Matrix3d> RIC;
-
-extern std::vector<Eigen::Vector3d> TIC;
-
 extern Eigen::Matrix3d imu_laser_R;
 
 extern Eigen::Vector3d imu_laser_T;
-
-extern Eigen::Matrix3d cam_laser_R;
-
-extern Eigen::Vector3d cam_laser_T;
-
-extern Eigen::Matrix3d imu_camera_R;
-
-extern Eigen::Vector3d imu_camera_T;
-
-extern Eigen::Vector3d imu_laser_offset;
-
-extern Transformd Tcam_lidar;
-
-extern Transformd T_i_c;
 
 extern Transformd T_i_l;
 
 extern Transformd T_l_i;
 
-extern float up_realsense_roll;
-
-extern float up_realsense_pitch;
-
-extern float up_realsense_yaw;
-
-extern float up_realsense_x;
-
-extern float up_realsense_y;
-
-extern float up_realsense_z;
-
-extern float down_realsense_roll;
-
-extern float down_realsense_pitch;
-
-extern float down_realsense_yaw;
-
-extern float down_realsense_x;
-
-extern float down_realsense_y;
-
-extern float down_realsense_z;
+extern std::string IMU_FRAME;
+extern std::string LIDAR_FRAME;
+extern std::string BASE_FRAME;
 
 extern float yaw_ratio;
 
@@ -117,14 +78,8 @@ extern bool USE_IMU_ROLL_PITCH;
 
 extern bool SAVE_PLY;
 
-extern std::string LIDAR_SENSOR; 
-extern std::string IMU_SENSOR; 
-
-extern Transformd T_ouster_sensor;
-
-extern Eigen::Matrix3d ouster_sensor_R;
-
-extern Eigen::Vector3d ouster_sensor_T;
+extern std::string LIDAR_SENSOR;
+extern std::string IMU_SENSOR;
 
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 

@@ -70,9 +70,7 @@ namespace super_odometry {
         float max_range;
         int filter_point_size;
         double voxel_leaf_size;
-        double lidar_mount_roll_rad;
-        double lidar_mount_pitch_rad;
-        double lidar_mount_yaw_rad;
+        Eigen::Matrix3d level_R = Eigen::Matrix3d::Identity();  // leveling rotation from TF (base_link -> lidar_link)
         SensorType lidar_sensor;
         SensorType imu_sensor;
         double imu_acc_x_limit;

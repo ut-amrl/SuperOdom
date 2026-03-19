@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <pcl/filters/voxel_grid.h>
 #include <Eigen/Geometry>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
 #define RED "\033[31m"     /* Red */
@@ -140,9 +141,6 @@ namespace super_odometry {
         this->declare_parameter<int>("feature_extraction_node.filter_point_size", 3);
         this->declare_parameter<int>("feature_extraction_node.provide_point_time", 1);
         this->declare_parameter<double>("feature_extraction_node.voxel_leaf_size", 0.0);
-        this->declare_parameter<double>("feature_extraction_node.lidar_mount_roll_deg", 0.0);
-        this->declare_parameter<double>("feature_extraction_node.lidar_mount_pitch_deg", 0.0);
-        this->declare_parameter<double>("feature_extraction_node.lidar_mount_yaw_deg", 0.0);
         this->declare_parameter<bool>("feature_extraction_node.debug_view", false);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
@@ -164,13 +162,30 @@ namespace super_odometry {
         config_.filter_point_size = this->get_parameter("feature_extraction_node.filter_point_size").as_int();
         config_.provide_point_time = this->get_parameter("feature_extraction_node.provide_point_time").as_int();
         config_.voxel_leaf_size = this->get_parameter("feature_extraction_node.voxel_leaf_size").as_double();
-        const double roll_deg = this->get_parameter("feature_extraction_node.lidar_mount_roll_deg").as_double();
-        const double pitch_deg = this->get_parameter("feature_extraction_node.lidar_mount_pitch_deg").as_double();
-        const double yaw_deg = this->get_parameter("feature_extraction_node.lidar_mount_yaw_deg").as_double();
-        config_.lidar_mount_roll_rad = roll_deg * M_PI / 180.0;
-        config_.lidar_mount_pitch_rad = pitch_deg * M_PI / 180.0;
-        config_.lidar_mount_yaw_rad = yaw_deg * M_PI / 180.0;
-        config_.use_dynamic_mask = this->get_parameter("feature_extraction_node.use_dynamic_mask").as_bool(); 
+
+        // Look up leveling rotation from TF (base_link -> lidar_link)
+        {
+            auto tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+            tf_buffer->setUsingDedicatedThread(true);
+            auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer, shared_from_this(), true);
+            try {
+                auto tf_base_lidar = tf_buffer->lookupTransform(
+                    BASE_FRAME, LIDAR_FRAME, tf2::TimePointZero, std::chrono::seconds(10));
+                const auto &r = tf_base_lidar.transform.rotation;
+                Eigen::Quaterniond q(r.w, r.x, r.y, r.z);
+                config_.level_R = q.normalized().toRotationMatrix();
+                RCLCPP_INFO(this->get_logger(),
+                            "Leveling rotation loaded from TF (%s -> %s)",
+                            BASE_FRAME.c_str(), LIDAR_FRAME.c_str());
+            } catch (const tf2::TransformException &ex) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Could not get TF %s -> %s: %s. No leveling will be applied.",
+                            BASE_FRAME.c_str(), LIDAR_FRAME.c_str(), ex.what());
+                config_.level_R = Eigen::Matrix3d::Identity();
+            }
+        }
+
+        config_.use_dynamic_mask = this->get_parameter("feature_extraction_node.use_dynamic_mask").as_bool();
         config_.debug_view_enabled = this->get_parameter("feature_extraction_node.debug_view").as_bool();
         config_.imu_acc_x_limit = this->get_parameter("feature_extraction_node.imu_acc_x_limit").as_double();
         config_.imu_acc_y_limit = this->get_parameter("feature_extraction_node.imu_acc_y_limit").as_double();
@@ -471,19 +486,11 @@ namespace super_odometry {
             voxel.filter(*lidar_filtered);
         }
 
-        if (std::abs(config_.lidar_mount_roll_rad) > 1e-12 ||
-            std::abs(config_.lidar_mount_pitch_rad) > 1e-12 ||
-            std::abs(config_.lidar_mount_yaw_rad) > 1e-12) {
-            const Eigen::Matrix3d mount_R =
-                (Eigen::AngleAxisd(config_.lidar_mount_yaw_rad, Eigen::Vector3d::UnitZ()) *
-                 Eigen::AngleAxisd(config_.lidar_mount_pitch_rad, Eigen::Vector3d::UnitY()) *
-                 Eigen::AngleAxisd(config_.lidar_mount_roll_rad, Eigen::Vector3d::UnitX()))
-                    .toRotationMatrix();
-            const Eigen::Matrix3d level_R = mount_R.transpose();
-
+        // Apply leveling rotation (from TF: base_link -> lidar_link)
+        if (!config_.level_R.isIdentity(1e-12)) {
             for (auto& pt : lidar_filtered->points) {
                 Eigen::Vector3d p(pt.x, pt.y, pt.z);
-                p = level_R * p;
+                p = config_.level_R * p;
                 pt.x = static_cast<float>(p.x());
                 pt.y = static_cast<float>(p.y());
                 pt.z = static_cast<float>(p.z());
@@ -822,6 +829,11 @@ namespace super_odometry {
                 {
                     auto &src = tmpOusterCloudIn->points[i];
                     auto &dst = pointCloud->points[i];
+                    static Transformd T_ouster_sensor = []{
+                        Eigen::Matrix3d R;
+                        R << -1, 0, 0,  0, -1, 0,  0, 0, 1;
+                        return Transformd(R, Eigen::Vector3d(0, 0, 0.036180));
+                    }();
                     utils::transformOusterPoints(&src, &dst, T_ouster_sensor);  // Convert the ouster points from ouster frame to sensor frame
                     dst.time = src.t * 1e-9f;
                 }

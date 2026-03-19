@@ -209,6 +209,7 @@ namespace super_odometry {
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubLIOPrediction;
 
         rclcpp::TimerBase::SharedPtr process_timer_;
+        std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
         rclcpp::CallbackGroup::SharedPtr cb_group_;
 

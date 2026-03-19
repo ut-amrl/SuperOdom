@@ -6,10 +6,10 @@
     use_imu_roll_pitch: false
     save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
     
-    world_frame: "map"
-    world_frame_rot: "map_rot"
-    sensor_frame: "sensor"
-    sensor_frame_rot: "sensor_rot"
+    world_frame: "odom"
+    world_frame_rot: "odom_rot"
+    sensor_frame: "velodyne"
+    sensor_frame_rot: "velodyne_rot"
 
     imu_acc_x_limit: 2.0
     imu_acc_y_limit: 2.0

@@ -98,6 +98,7 @@ namespace super_odometry {
         process_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(static_cast<int>(100.)),
             std::bind(&laserMapping::process, this));
+        tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(this);
 
         slam.initROSInterface(shared_from_this());
         slam.localMap.lineRes_ = config_.lineRes;
@@ -434,11 +435,23 @@ return PredictionSource::CONSTANT_VELOCITY;
         }
         pubprediction_source->publish(prediction_source_msg);
 
+        // Publish odometry/path in LiDAR coordinate convention while keeping
+        // internal state estimation untouched.
+        Transformd T_w_publish(q_w_curr, t_w_curr);
+        Transformd T_w_lidar_publish = T_l_i * T_w_publish;
+        // Rigid transform from internal published world clouds to LiDAR-frame convention.
+        Transformd T_publish_map = T_w_lidar_publish * T_w_publish.inverse();
+        Eigen::Affine3f tf_publish_map = Eigen::Affine3f::Identity();
+        tf_publish_map.linear() = T_publish_map.rot.toRotationMatrix().cast<float>();
+        tf_publish_map.translation() = T_publish_map.pos.cast<float>();
+
         if (frameCount % 5 == 0 && config_.debug_view_enabled) {
             laserCloudSurround->clear();
             *laserCloudSurround = slam.localMap.get5x5LocalMap(slam.pos_in_localmap);
+            pcl::PointCloud<PointType> laserCloudSurroundPublish;
+            pcl::transformPointCloud(*laserCloudSurround, laserCloudSurroundPublish, tf_publish_map);
             sensor_msgs::msg::PointCloud2 laserCloudSurround3;
-            pcl::toROSMsg(*laserCloudSurround, laserCloudSurround3);
+            pcl::toROSMsg(laserCloudSurroundPublish, laserCloudSurround3);
             laserCloudSurround3.header.stamp =
                     rclcpp::Time(timeLaserOdometry*1e9);
             laserCloudSurround3.header.frame_id = WORLD_FRAME;
@@ -448,6 +461,8 @@ return PredictionSource::CONSTANT_VELOCITY;
         if (frameCount % 20 == 0) {
             pcl::PointCloud<PointType> laserCloudMap;
             laserCloudMap = slam.localMap.getAllLocalMap();
+            pcl::PointCloud<PointType> laserCloudMapPublish;
+            pcl::transformPointCloud(laserCloudMap, laserCloudMapPublish, tf_publish_map);
             sensor_msgs::msg::PointCloud2 laserCloudMsg;
             pcl::toROSMsg(laserCloudMap, laserCloudMsg);
             laserCloudMsg.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
@@ -455,8 +470,13 @@ return PredictionSource::CONSTANT_VELOCITY;
             pubLaserCloudMap->publish(laserCloudMsg);
             
             if (slam.localization_mode) {
-                priorCloudMsg.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
-                pubLaserCloudPrior->publish(priorCloudMsg);
+                pcl::PointCloud<PointType> laserCloudPriorPublish;
+                pcl::transformPointCloud(*laserCloudPrior, laserCloudPriorPublish, tf_publish_map);
+                sensor_msgs::msg::PointCloud2 priorCloudMsgPublish;
+                pcl::toROSMsg(laserCloudPriorPublish, priorCloudMsgPublish);
+                priorCloudMsgPublish.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+                priorCloudMsgPublish.header.frame_id = WORLD_FRAME;
+                pubLaserCloudPrior->publish(priorCloudMsgPublish);
             }
         }
 
@@ -470,8 +490,8 @@ return PredictionSource::CONSTANT_VELOCITY;
 
             utils::pointAssociateToMap(&laserCloudFullRes->points[i],
                                 &laserCloudFullRes->points[i],
-                                q_w_curr,
-                                t_w_curr);
+                                T_w_lidar_publish.rot,
+                                T_w_lidar_publish.pos);
         }
 
         pcl::PointCloud<pcl::PointXYZI> laserCloudFullResCvt, laserCloudFullResClean;
@@ -507,14 +527,14 @@ return PredictionSource::CONSTANT_VELOCITY;
         odomAftMapped.child_frame_id = SENSOR_FRAME;
         odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
 
-        odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
-        odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
-        odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
-        odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
+        odomAftMapped.pose.pose.orientation.x = T_w_lidar_publish.rot.x();
+        odomAftMapped.pose.pose.orientation.y = T_w_lidar_publish.rot.y();
+        odomAftMapped.pose.pose.orientation.z = T_w_lidar_publish.rot.z();
+        odomAftMapped.pose.pose.orientation.w = T_w_lidar_publish.rot.w();
 
-        odomAftMapped.pose.pose.position.x = t_w_curr.x();
-        odomAftMapped.pose.pose.position.y = t_w_curr.y();
-        odomAftMapped.pose.pose.position.z = t_w_curr.z();
+        odomAftMapped.pose.pose.position.x = T_w_lidar_publish.pos.x();
+        odomAftMapped.pose.pose.position.y = T_w_lidar_publish.pos.y();
+        odomAftMapped.pose.pose.position.z = T_w_lidar_publish.pos.z();
 
         odomAftMapped.twist.twist.linear.x = vel_b.x();
         odomAftMapped.twist.twist.linear.y = vel_b.y();
@@ -568,6 +588,14 @@ return PredictionSource::CONSTANT_VELOCITY;
 
         rclcpp::Time pub_time = rclcpp::Clock{RCL_ROS_TIME}.now(); //PARV_TODO - find how to syncrynoise this with rosbag time
         pubOdomAftMapped->publish(odomAftMapped);
+        geometry_msgs::msg::TransformStamped tf_msg;
+        tf_msg.header = odomAftMapped.header;
+        tf_msg.child_frame_id = odomAftMapped.child_frame_id;
+        tf_msg.transform.translation.x = odomAftMapped.pose.pose.position.x;
+        tf_msg.transform.translation.y = odomAftMapped.pose.pose.position.y;
+        tf_msg.transform.translation.z = odomAftMapped.pose.pose.position.z;
+        tf_msg.transform.rotation = odomAftMapped.pose.pose.orientation;
+        tf_broadcaster_->sendTransform(tf_msg);
 
         geometry_msgs::msg::PoseStamped laserAfterMappedPose;
         laserAfterMappedPose.header = odomAftMapped.header;

@@ -200,9 +200,9 @@ namespace super_odometry {
         double last_processed_lidar_time = -1;
         double lastImuT_imu = -1;
         double lastImuT_opt = -1;
+        double last_vectornav_enu_time = -1;
         int key = 1;
         int imuPreintegrationResetId = 0;
-        int frame_count = 0;
 
         // TF alignment yaw correction state
         bool imu_yaw_initialized_ = false;

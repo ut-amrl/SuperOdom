@@ -93,10 +93,10 @@ namespace super_odometry {
 
         //set extrinsic matrix for laser and imu
         if (USE_TF_ALIGNMENT) {
-            // When TF-aligned, both frames are in base orientation.
-            // T_i_l_working has identity rotation, translation-only.
+            // When TF-aligned, T_i_l_working remains IMU->LiDAR for deskew,
+            // but preintegration expects lidar2Imu (LiDAR->IMU).
             lidar2Imu = gtsam::Pose3(gtsam::Rot3(),
-                                     gtsam::Point3(T_i_l_working.pos));
+                                     gtsam::Point3(imu_laser_T));
             imu2Lidar = lidar2Imu.inverse();
         } else if (PROVIDE_IMU_LASER_EXTRINSIC) {
             lidar2Imu = gtsam::Pose3(gtsam::Rot3(imu_laser_R), gtsam::Point3(imu_laser_T));
@@ -566,6 +566,17 @@ namespace super_odometry {
    void imuPreintegration::imuHandler(const sensor_msgs::msg::Imu::SharedPtr imu_raw) {
     std::lock_guard<std::mutex> lock(mBuf);
 
+    if (config_.imu_sensor == SensorType::VECTORNAV_ENU) {
+        const double imu_time = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
+        if (last_vectornav_enu_time >= 0.0) {
+            const double dt = imu_time - last_vectornav_enu_time;
+            if (dt <= 0.0 || dt < 0.004) {
+                return;
+            }
+        }
+        last_vectornav_enu_time = imu_time;
+    }
+
     // --- TF entry-point rotation: rotate raw IMU to base frame ---
     sensor_msgs::msg::Imu imu_msg = *imu_raw;
     if (USE_TF_ALIGNMENT) {
@@ -708,57 +719,55 @@ void imuPreintegration::publishOdometry(
     const gtsam::NavState& currentState, nav_msgs::msg::Odometry &odometry) {
     
     prepareOdometryMessage(odometry, thisImu, currentState);
-    
-    if (frame_count++ % 4 == 0) {
-        pubImuOdometry->publish(odometry);
 
-        geometry_msgs::msg::PoseStamped pose_msg;
-        pose_msg.header = odometry.header;
-        pose_msg.pose = odometry.pose.pose;
-        pubStatePose->publish(pose_msg);
+    pubImuOdometry->publish(odometry);
 
-        geometry_msgs::msg::TwistStamped twist_msg;
-        twist_msg.header = odometry.header;
-        twist_msg.header.frame_id =
-            odometry.child_frame_id.empty() ? odometry.header.frame_id : odometry.child_frame_id;
-        twist_msg.twist = odometry.twist.twist;
-        pubStateTwist->publish(twist_msg);
+    geometry_msgs::msg::PoseStamped pose_msg;
+    pose_msg.header = odometry.header;
+    pose_msg.pose = odometry.pose.pose;
+    pubStatePose->publish(pose_msg);
 
-        geometry_msgs::msg::TwistStamped twist_wf_msg;
-        twist_wf_msg.header = odometry.header;
-        twist_wf_msg.header.frame_id = odometry.header.frame_id;
-        twist_wf_msg.twist.linear.x = currentState.velocity().x();
-        twist_wf_msg.twist.linear.y = currentState.velocity().y();
-        twist_wf_msg.twist.linear.z = currentState.velocity().z();
+    geometry_msgs::msg::TwistStamped twist_msg;
+    twist_msg.header = odometry.header;
+    twist_msg.header.frame_id =
+        odometry.child_frame_id.empty() ? odometry.header.frame_id : odometry.child_frame_id;
+    twist_msg.twist = odometry.twist.twist;
+    pubStateTwist->publish(twist_msg);
 
-        Eigen::Quaterniond q_w_curr;
-        if (config_.use_imu_roll_pitch) {
-            q_w_curr = Eigen::Quaterniond(
-                thisImu.orientation.w,
-                thisImu.orientation.x,
-                thisImu.orientation.y,
-                thisImu.orientation.z
-            );
-        } else {
-            q_w_curr = Eigen::Quaterniond(
-                currentState.quaternion().w(),
-                currentState.quaternion().x(),
-                currentState.quaternion().y(),
-                currentState.quaternion().z()
-            );
-        }
+    geometry_msgs::msg::TwistStamped twist_wf_msg;
+    twist_wf_msg.header = odometry.header;
+    twist_wf_msg.header.frame_id = odometry.header.frame_id;
+    twist_wf_msg.twist.linear.x = currentState.velocity().x();
+    twist_wf_msg.twist.linear.y = currentState.velocity().y();
+    twist_wf_msg.twist.linear.z = currentState.velocity().z();
 
-        Eigen::Vector3d omega_body(
-            odometry.twist.twist.angular.x,
-            odometry.twist.twist.angular.y,
-            odometry.twist.twist.angular.z
+    Eigen::Quaterniond q_w_curr;
+    if (config_.use_imu_roll_pitch) {
+        q_w_curr = Eigen::Quaterniond(
+            thisImu.orientation.w,
+            thisImu.orientation.x,
+            thisImu.orientation.y,
+            thisImu.orientation.z
         );
-        Eigen::Vector3d omega_world = q_w_curr * omega_body;
-        twist_wf_msg.twist.angular.x = omega_world.x();
-        twist_wf_msg.twist.angular.y = omega_world.y();
-        twist_wf_msg.twist.angular.z = omega_world.z();
-        pubStateTwistWf->publish(twist_wf_msg);
+    } else {
+        q_w_curr = Eigen::Quaterniond(
+            currentState.quaternion().w(),
+            currentState.quaternion().x(),
+            currentState.quaternion().y(),
+            currentState.quaternion().z()
+        );
     }
+
+    Eigen::Vector3d omega_body(
+        odometry.twist.twist.angular.x,
+        odometry.twist.twist.angular.y,
+        odometry.twist.twist.angular.z
+    );
+    Eigen::Vector3d omega_world = q_w_curr * omega_body;
+    twist_wf_msg.twist.angular.x = omega_world.x();
+    twist_wf_msg.twist.angular.y = omega_world.y();
+    twist_wf_msg.twist.angular.z = omega_world.z();
+    pubStateTwistWf->publish(twist_wf_msg);
 
     // Publish health status
     std_msgs::msg::Bool health_status_msg;
@@ -792,8 +801,7 @@ void imuPreintegration::publishTransform(nav_msgs::msg::Odometry &odometry, cons
     q.setZ(odometry.pose.pose.orientation.z);
     transform.setRotation(q);
     transform_stamped_.transform = tf2::toMsg(transform);
-    if(frame_count%4==0)
-        br.sendTransform(transform_stamped_);
+    br.sendTransform(transform_stamped_);
 }
 
 void imuPreintegration::updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu){

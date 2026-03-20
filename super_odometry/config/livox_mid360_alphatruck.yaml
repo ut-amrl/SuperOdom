@@ -29,7 +29,7 @@
         scan_line: 4      # DONT TOUCH
         min_range: 0.2
         filter_point_size: 3
-        voxel_leaf_size: 0.5
+        voxel_leaf_size: 0.25
 
     # Laser Mapping Params
     laser_mapping_node:

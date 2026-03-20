@@ -208,6 +208,7 @@ namespace super_odometry {
         bool LASER_CAMERA_SYNC_SUCCESS = false;
         bool IMU_INIT=false;
         double m_imuPeriod;
+        double last_vectornav_enu_time_ = -1;
 
         super_odometry_msgs::msg::LaserFeature laserFeature;
         std_msgs::msg::Header FeatureHeader;

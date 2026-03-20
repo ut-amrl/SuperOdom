@@ -145,10 +145,11 @@ bool readCalibration(rclcpp::Node::SharedPtr node)
         RCLCPP_INFO(node->get_logger(), GREEN BOLD "[super_odometry] Using TF-based alignment — skipping calibration file" RESET);
 
         // Set extrinsics from TF-derived values
-        // T_i_l_working has identity rotation (both frames aligned to base)
-        // and translation = lidar_pos - imu_pos in base frame
+        // T_i_l_working stays IMU->LiDAR for the deskew path.
+        // imu_laser_T follows the legacy imu^T_laser convention (LiDAR->IMU)
+        // used by IMU preintegration and centrifugal acceleration compensation.
         imu_laser_R = Eigen::Matrix3d::Identity();
-        imu_laser_T = t_base_lidar - t_base_imu;
+        imu_laser_T = t_base_imu - t_base_lidar;
         imu_laser_offset = Eigen::Vector3d::Zero();
 
         T_i_l = T_i_l_working;

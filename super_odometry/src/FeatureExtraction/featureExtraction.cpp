@@ -652,6 +652,18 @@ namespace super_odometry {
     void featureExtraction::imu_Handler(const sensor_msgs::msg::Imu::SharedPtr msg_in) {
         m_buf.lock();
 
+        if (config_.imu_sensor == SensorType::VECTORNAV_ENU) {
+            const double imu_time = msg_in->header.stamp.sec + msg_in->header.stamp.nanosec * 1e-9;
+            if (last_vectornav_enu_time_ >= 0.0) {
+                const double dt = imu_time - last_vectornav_enu_time_;
+                if (dt <= 0.0 || dt < 0.004) {
+                    m_buf.unlock();
+                    return;
+                }
+            }
+            last_vectornav_enu_time_ = imu_time;
+        }
+
         // --- TF entry-point rotation: rotate IMU data to base frame ---
         if (USE_TF_ALIGNMENT) {
             sensor_msgs::msg::Imu rotated_imu = *msg_in;

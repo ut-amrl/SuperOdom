@@ -92,9 +92,11 @@ namespace super_odometry {
         imuIntegratorOpt_ = std::make_shared<gtsam::PreintegratedImuMeasurements>(p, prior_imu_bias); // setting up the IMU integration for optimization
 
         // Extrinsic between the working LiDAR/IMU frames.
+        // lidar2Imu is used as lidarPose.compose(lidar2Imu) to get IMU pose,
+        // so it must be T_{lidar}_{imu} (pose of IMU in lidar frame = T_l_i).
         lidar2Imu = gtsam::Pose3(
-            gtsam::Rot3(T_i_l_working.rot.toRotationMatrix()),
-            gtsam::Point3(T_i_l_working.pos.x(), T_i_l_working.pos.y(), T_i_l_working.pos.z()));
+            gtsam::Rot3(T_l_i_working.rot.toRotationMatrix()),
+            gtsam::Point3(T_l_i_working.pos.x(), T_l_i_working.pos.y(), T_l_i_working.pos.z()));
         imu2Lidar = lidar2Imu.inverse();
 
     }

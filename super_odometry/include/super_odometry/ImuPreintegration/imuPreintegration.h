@@ -9,6 +9,8 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_broadcaster.h>
@@ -54,11 +56,13 @@ namespace super_odometry {
         float lidar_correction_noise;
         float smooth_factor;
         bool  use_imu_roll_pitch;
-        SensorType sensor;
+        SensorType lidar_sensor;
+        SensorType imu_sensor;
 
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
+        float imu_dt;
     };
 
     class imuPreintegration : public rclcpp::Node {
@@ -101,7 +105,7 @@ namespace super_odometry {
 
         void resetParams();
 
-        bool handleIMUInitialization(const sensor_msgs::msg::Imu::SharedPtr&imu_raw, 
+        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, 
         sensor_msgs::msg::Imu& thisImu);
 
 
@@ -117,7 +121,7 @@ namespace super_odometry {
 
         void processTiming(const sensor_msgs::msg::Imu& thisImu);
 
-        void initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw);
+        void initializeImu(const sensor_msgs::msg::Imu& imu_raw);
 
         void correctLivoxGravity(sensor_msgs::msg::Imu& thisImu);
 
@@ -138,6 +142,9 @@ namespace super_odometry {
         
 
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubImuOdometry;
+        rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pubStatePose;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pubStateTwist;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pubStateTwistWf;
         rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pubHealthStatus;
         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubImuPath;
 
@@ -196,6 +203,10 @@ namespace super_odometry {
         int key = 1;
         int imuPreintegrationResetId = 0;
         int frame_count = 0;
+
+        // TF alignment yaw correction state
+        bool imu_yaw_initialized_ = false;
+        Eigen::Quaterniond imu_yaw_correction_ = Eigen::Quaterniond::Identity();
 
         enum IMU_STATE : uint8_t {
         FAIL=0,    //lose imu information 

@@ -34,6 +34,7 @@
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "super_odometry/utils/superodom_utils.h"
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 
 
 namespace super_odometry {
@@ -69,7 +70,9 @@ namespace super_odometry {
         float min_range;
         float max_range;
         int filter_point_size;
-        SensorType sensor;
+        double voxel_leaf_size;
+        SensorType lidar_sensor;
+        SensorType imu_sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
@@ -118,6 +121,8 @@ namespace super_odometry {
         void laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg);
 
         void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
+
+        void livoxPcl2Handler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
         void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
             pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);
@@ -182,6 +187,7 @@ namespace super_odometry {
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdom;
         rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subLivoxCloud;
+        rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLivoxPcl2Cloud;
 
         // Publishers
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;

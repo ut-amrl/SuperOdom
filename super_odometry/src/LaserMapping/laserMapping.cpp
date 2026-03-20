@@ -42,6 +42,10 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
+        if (USE_TF_ALIGNMENT) {
+            publishRectifiedWorkingFrames(shared_from_this());
+        }
+
         RCLCPP_INFO(this->get_logger(), "DEBUG VIEW: %d", config_.debug_view_enabled);
         RCLCPP_INFO(this->get_logger(), "ENABLE OUSTER DATA: %d", config_.enable_ouster_data);
         RCLCPP_INFO(this->get_logger(), "line resolution %f plane resolution %f vision_laser_time_offset %f",
@@ -286,9 +290,11 @@ void laserMapping::initializeFirstFrame(){
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
-        auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
-        q_extrinsic.normalize();
-        q_w_curr=q_extrinsic.inverse()*q_w_curr;
+        if (!USE_TF_ALIGNMENT) {
+            auto q_extrinsic = Eigen::Quaterniond(imu_laser_R);
+            q_extrinsic.normalize();
+            q_w_curr = q_extrinsic.inverse() * q_w_curr;
+        }
         
         
     }else{

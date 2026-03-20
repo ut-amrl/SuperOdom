@@ -3,6 +3,21 @@
 //
 
 #include <super_odometry/FeatureExtraction/featureExtraction.h>
+#include <super_odometry/utils/imu_frame_utils.h>
+#include <pcl/filters/voxel_grid.h>
+
+namespace {
+
+inline ::Transformd getActiveImuToLidarTransform() {
+    return USE_TF_ALIGNMENT ? T_i_l_working
+                            : T_i_l;
+}
+
+inline ::Transformd getActiveLidarToImuTransform() {
+    return getActiveImuToLidarTransform().inverse();
+}
+
+} // namespace
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
 #define RED "\033[31m"     /* Red */
@@ -65,15 +80,22 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
-        if (config_.sensor == SensorType::VELODYNE || config_.sensor == SensorType::OUSTER) {
+        if (config_.lidar_sensor == SensorType::VELODYNE || config_.lidar_sensor == SensorType::OUSTER) {
             subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, laser_qos, 
                     std::bind(&featureExtraction::laserCloudHandler, this,
                     std::placeholders::_1), sub_options);
-        } else if (config_.sensor == SensorType::LIVOX) {
-            subLivoxCloud = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(LASER_TOPIC, 20, 
-                    std::bind(&featureExtraction::livoxHandler, this,
-                    std::placeholders::_1), sub_options);
-        } //TODO: add this to config
+        } else if (config_.lidar_sensor == SensorType::LIVOX) {
+            if (USE_TF_ALIGNMENT) {
+                // Use PointCloud2 interface for Livox when TF-aligned
+                subLivoxPcl2Cloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(LASER_TOPIC, 20,
+                        std::bind(&featureExtraction::livoxPcl2Handler, this,
+                        std::placeholders::_1), sub_options);
+            } else {
+                subLivoxCloud = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(LASER_TOPIC, 20, 
+                        std::bind(&featureExtraction::livoxHandler, this,
+                        std::placeholders::_1), sub_options);
+            }
+        }
 
         subImu = this->create_subscription<sensor_msgs::msg::Imu>(
             IMU_TOPIC, imu_qos, 
@@ -112,6 +134,9 @@ namespace super_odometry {
 
         delay_count_ = 0;
         m_imuPeriod = 1.0/imu_Init->imu_frequency;
+
+        // Publish rectified frames when using TF alignment
+        publishRectifiedWorkingFrames(shared_from_this());
     }
 
     bool featureExtraction::readParameters()
@@ -129,6 +154,7 @@ namespace super_odometry {
         this->declare_parameter<float>("feature_extraction_node.max_range", 130.0);
         this->declare_parameter<int>("feature_extraction_node.filter_point_size", 3);
         this->declare_parameter<int>("feature_extraction_node.provide_point_time", 1);
+        this->declare_parameter<double>("feature_extraction_node.voxel_leaf_size", 0.0);
         this->declare_parameter<bool>("feature_extraction_node.debug_view", false);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_x_limit", 1.0);
         this->declare_parameter<double>("feature_extraction_node.imu_acc_y_limit", 1.0);
@@ -147,6 +173,7 @@ namespace super_odometry {
         config_.max_range = this->get_parameter("feature_extraction_node.max_range").as_double();
         config_.filter_point_size = this->get_parameter("feature_extraction_node.filter_point_size").as_int();
         config_.provide_point_time = this->get_parameter("feature_extraction_node.provide_point_time").as_int();
+        config_.voxel_leaf_size = this->get_parameter("feature_extraction_node.voxel_leaf_size").as_double();
         config_.use_dynamic_mask = this->get_parameter("feature_extraction_node.use_dynamic_mask").as_bool(); 
         config_.debug_view_enabled = this->get_parameter("feature_extraction_node.debug_view").as_bool();
         config_.imu_acc_x_limit = this->get_parameter("feature_extraction_node.imu_acc_x_limit").as_double();
@@ -157,13 +184,14 @@ namespace super_odometry {
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
         config_.imu_acc_z_limit = IMU_ACC_Z_LIMIT;
 
-        if (SENSOR == "livox") {
-            config_.sensor = SensorType::LIVOX;
-        } else if (SENSOR == "velodyne") {
-            config_.sensor = SensorType::VELODYNE;
-        } else if (SENSOR == "ouster") {
-            config_.sensor = SensorType::OUSTER;
-        } 
+        if (LIDAR_SENSOR == "livox") {
+            config_.lidar_sensor = SensorType::LIVOX;
+        } else if (LIDAR_SENSOR == "velodyne") {
+            config_.lidar_sensor = SensorType::VELODYNE;
+        } else if (LIDAR_SENSOR == "ouster") {
+            config_.lidar_sensor = SensorType::OUSTER;
+        }
+        config_.imu_sensor = imu_sensor;
         return true;
     }
 
@@ -278,11 +306,14 @@ namespace super_odometry {
     // Step 3: Get start pose
     Transformd start_pose = getInterpolatedPoseAtTime(lidar_start_time);
 
-    // Step 4: Calculate initial transform
+    // Step 4: Downstream deskew should operate in the active working frames.
+    // In TF-aligned mode, that means translation-only rectified extrinsics.
     Transformd T_w_original(start_pose.rot, start_pose.pos);
     bool is_imu_data = std::is_same_v<BufferType, Imu::Ptr>;
+    const Transformd imu_to_lidar = getActiveImuToLidarTransform();
+    const Transformd lidar_to_imu = getActiveLidarToImuTransform();
     Transformd T_w_original_sensor = is_imu_data ? 
-                                    T_w_original * T_i_l : 
+                                    T_w_original * imu_to_lidar : 
                                     T_w_original;
 
     q_w_original_l = T_w_original_sensor.rot;
@@ -297,11 +328,11 @@ namespace super_odometry {
         double point_time = point.time + lidar_start_time;
         Transformd point_pose = getInterpolatedPoseAtTime(point_time);
         
-        // Transform point
+        // Transform point inside the active working frames.
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
         Transformd T_final = is_imu_data ? 
-                            T_l_i * T_original_current * T_i_l : 
+                            lidar_to_imu * T_original_current * imu_to_lidar : 
                             T_original_current;
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
@@ -356,11 +387,13 @@ namespace super_odometry {
         const Transformd& point_pose,
         bool is_imu_data)
     {
+        const Transformd imu_to_lidar = getActiveImuToLidarTransform();
+        const Transformd lidar_to_imu = getActiveLidarToImuTransform();
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
 
         Transformd T_final = is_imu_data ? 
-                            T_l_i * T_original_current * T_i_l : 
+                            lidar_to_imu * T_original_current * imu_to_lidar : 
                             T_original_current;
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
@@ -558,9 +591,8 @@ namespace super_odometry {
         imudata->time = measurement.timestamp;
         
         // Handle Livox sensor specific processing
-        if(IMU_INIT && config_.sensor == SensorType::LIVOX) {
+        if (IMU_INIT && config_.imu_sensor == SensorType::LIVOX && !USE_TF_ALIGNMENT) {
             double gravity = imu_Init->gravity_norm;
-            Eigen::Vector3d gyr = imu_Init->imu_laser_R_Gravity * measurement.gyr;
             Eigen::Vector3d accel = imu_Init->imu_laser_R_Gravity * measurement.accel;
             imudata->acc = accel * gravity / imu_Init->acc_mean.norm();
         } else {
@@ -619,7 +651,23 @@ namespace super_odometry {
 
     void featureExtraction::imu_Handler(const sensor_msgs::msg::Imu::SharedPtr msg_in) {
         m_buf.lock();
-        
+
+        // --- TF entry-point rotation: rotate IMU data to base frame ---
+        if (USE_TF_ALIGNMENT) {
+            sensor_msgs::msg::Imu rotated_imu = *msg_in;
+            super_odometry::utils::rotate_imu_to_frame(rotated_imu, R_base_imu);
+            auto measurement = parseImuMessage(
+                std::make_shared<sensor_msgs::msg::Imu>(rotated_imu));
+            calculateDeltaTime(measurement.timestamp);
+            auto imudata = createImuData(measurement);
+            updateImuOrientation(imudata);
+            imuBuf.addMeas(imudata, measurement.timestamp);
+            imuInitialization(measurement.timestamp);
+            m_buf.unlock();
+            return;
+        }
+
+        // --- Legacy path (no TF alignment) ---
         auto measurement = parseImuMessage(msg_in);
         
         calculateDeltaTime(measurement.timestamp);
@@ -724,12 +772,12 @@ namespace super_odometry {
         if (config_.provide_point_time)
         {
 
-            if (config_.sensor == SensorType::VELODYNE)
+            if (config_.lidar_sensor == SensorType::VELODYNE)
             {
                 pcl::fromROSMsg(*laserCloudMsg, *pointCloud);
 
             }
-            else if (config_.sensor == SensorType::OUSTER)
+            else if (config_.lidar_sensor == SensorType::OUSTER)
             {
                 // Convert to Velodyne format
                 pcl::fromROSMsg(*laserCloudMsg, *tmpOusterCloudIn);
@@ -746,7 +794,7 @@ namespace super_odometry {
             }
             else
             {
-                RCLCPP_ERROR(this->get_logger(),"Unknown sensor type: %d", int(sensor));
+                RCLCPP_ERROR(this->get_logger(),"Unknown sensor type: %d", int(lidar_sensor));
                 rclcpp::shutdown();
             }
         }
@@ -782,11 +830,13 @@ namespace super_odometry {
         
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
             new pcl::PointCloud<point_os::PointcloudXYZITR>());
-        
-        pointCloud->points.resize(msg->point_num);
+        pointCloud->points.reserve(msg->point_num);
 
+        // Choose rotation: TF-based or gravity-based
         Eigen::Matrix3d rotation_matrix = Eigen::Matrix3d::Identity();
-        if (!imuBuf.empty()) {
+        if (USE_TF_ALIGNMENT) {
+            rotation_matrix = R_base_lidar;
+        } else if (!imuBuf.empty()) {
             rotation_matrix = imu_Init->imu_laser_R_Gravity;
         } 
         
@@ -794,14 +844,14 @@ namespace super_odometry {
             for (uint i=0; i < msg->point_num; i++) {
                 if ((msg->points[i].line < config_.N_SCANS) &&
                     ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {   
-                    Eigen::Vector3d point(msg->points[i].x, msg->points[i].y, msg->points[i].z);
-                    Eigen::Vector3d transformed_point = rotation_matrix * point;
-                    pointCloud->points[i].x = transformed_point.x();
-                    pointCloud->points[i].y = transformed_point.y();
-                    pointCloud->points[i].z = transformed_point.z();
-                    pointCloud->points[i].intensity = msg->points[i].reflectivity;
-                    pointCloud->points[i].time = msg->points[i].offset_time / float(1000000000);
-                    pointCloud->points[i].ring = msg->points[i].line;
+                    point_os::PointcloudXYZITR point;
+                    point.x = msg->points[i].x;
+                    point.y = msg->points[i].y;
+                    point.z = msg->points[i].z;
+                    point.intensity = msg->points[i].reflectivity;
+                    point.time = msg->points[i].offset_time / float(1000000000);
+                    point.ring = msg->points[i].line;
+                    pointCloud->points.push_back(point);
                 }
             }
         } else {
@@ -809,10 +859,144 @@ namespace super_odometry {
             rclcpp::shutdown();
         }
 
+        super_odometry::utils::rotate_pointcloud_to_frame(*pointCloud, rotation_matrix);
+        if (config_.voxel_leaf_size > 0.0) {
+            pcl::VoxelGrid<point_os::PointcloudXYZITR> voxel_filter;
+            voxel_filter.setLeafSize(config_.voxel_leaf_size, config_.voxel_leaf_size, config_.voxel_leaf_size);
+            voxel_filter.setInputCloud(pointCloud);
+            auto filtered_cloud = pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr(new pcl::PointCloud<point_os::PointcloudXYZITR>());
+            voxel_filter.filter(*filtered_cloud);
+            pointCloud = filtered_cloud;
+        }
+        pointCloud->width = static_cast<uint32_t>(pointCloud->points.size());
+        pointCloud->height = 1;
+
         manageLidarBuffer(pointCloud, msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9);
 
         if(IMU_INIT==true or imuBuf.empty())
         {   
+            undistortionAndFeatureExtraction();
+            double lidar_first_time;
+            lidarBuf.getFirstTime(lidar_first_time);
+            lidarBuf.clean(lidar_first_time);
+        }
+
+        m_buf.unlock();
+    }
+
+    // --- PointCloud2-based Livox handler (for TF alignment mode) ---
+    void featureExtraction::livoxPcl2Handler(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+    {
+        frameCount = frameCount + 1;
+        if (frameCount % config_.skipFrame != 0) {
+            return;
+        }
+
+        m_buf.lock();
+
+        if (!config_.provide_point_time) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "livox_pcl2 requires per-point timestamps.");
+            rclcpp::shutdown();
+        }
+
+        if (msg->is_bigendian) {
+            RCLCPP_ERROR(this->get_logger(), "Big-endian PointCloud2 is not supported.");
+            rclcpp::shutdown();
+        }
+
+        const std::size_t num_points = static_cast<std::size_t>(msg->width) * static_cast<std::size_t>(msg->height);
+
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud(
+            new pcl::PointCloud<point_os::PointcloudXYZITR>());
+        pointCloud->points.reserve(num_points);
+        pointCloud->is_dense = false;
+
+        // Validate required fields
+        auto has_field = [&](const char* name) {
+            for (const auto& f : msg->fields) {
+                if (f.name == name) return true;
+            }
+            return false;
+        };
+        if (!has_field("x") || !has_field("y") || !has_field("z") ||
+            !has_field("intensity") || !has_field("tag") || !has_field("line") || !has_field("timestamp")) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "livox_pcl2 expects fields: x,y,z,intensity,tag,line,timestamp.");
+            rclcpp::shutdown();
+        }
+
+        const double stamp_sec = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
+        const std::int64_t stamp_ns =
+            static_cast<std::int64_t>(msg->header.stamp.sec) * 1000000000LL +
+            static_cast<std::int64_t>(msg->header.stamp.nanosec);
+
+        // TF-based rotation for lidar points
+        Eigen::Matrix3d rotation_matrix = Eigen::Matrix3d::Identity();
+        if (USE_TF_ALIGNMENT) {
+            rotation_matrix = R_base_lidar;
+        } else if (!imuBuf.empty()) {
+            rotation_matrix = imu_Init->imu_laser_R_Gravity;
+        }
+
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_intensity(*msg, "intensity");
+        sensor_msgs::PointCloud2ConstIterator<uint8_t> iter_tag(*msg, "tag");
+        sensor_msgs::PointCloud2ConstIterator<uint8_t> iter_line(*msg, "line");
+        sensor_msgs::PointCloud2ConstIterator<double> iter_timestamp(*msg, "timestamp");
+
+        for (std::size_t i = 0; i < num_points;
+             ++i, ++iter_x, ++iter_y, ++iter_z, ++iter_intensity, ++iter_tag, ++iter_line, ++iter_timestamp) {
+            const uint8_t line = *iter_line;
+            if (line >= static_cast<uint8_t>(config_.N_SCANS)) {
+                continue;
+            }
+            const uint8_t tag = *iter_tag;
+            if (!(((tag & 0x30) == 0x10) || ((tag & 0x30) == 0x00))) {
+                continue;
+            }
+
+            const std::int64_t point_time_ns = static_cast<std::int64_t>(*iter_timestamp);
+            double point_time_sec = (point_time_ns - stamp_ns) * 1e-9;
+            if (point_time_sec < 0.0) {
+                point_time_sec = 0.0;
+            }
+
+            point_os::PointcloudXYZITR out;
+            out.x = *iter_x;
+            out.y = *iter_y;
+            out.z = *iter_z;
+            out.intensity = *iter_intensity;
+            out.time = static_cast<float>(point_time_sec);
+            out.ring = line;
+            pointCloud->points.push_back(out);
+        }
+
+        if (pointCloud->points.empty()) {
+            RCLCPP_WARN(this->get_logger(), "livox_pcl2: empty cloud after filters.");
+            m_buf.unlock();
+            return;
+        }
+
+        super_odometry::utils::rotate_pointcloud_to_frame(*pointCloud, rotation_matrix);
+        if (config_.voxel_leaf_size > 0.0) {
+            pcl::VoxelGrid<point_os::PointcloudXYZITR> voxel_filter;
+            voxel_filter.setLeafSize(config_.voxel_leaf_size, config_.voxel_leaf_size, config_.voxel_leaf_size);
+            voxel_filter.setInputCloud(pointCloud);
+            auto filtered_cloud = pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr(new pcl::PointCloud<point_os::PointcloudXYZITR>());
+            voxel_filter.filter(*filtered_cloud);
+            pointCloud = filtered_cloud;
+        }
+
+        pointCloud->width = static_cast<uint32_t>(pointCloud->points.size());
+        pointCloud->height = 1;
+
+        manageLidarBuffer(pointCloud, stamp_sec);
+
+        if(IMU_INIT==true or imuBuf.empty())
+        {
             undistortionAndFeatureExtraction();
             double lidar_first_time;
             lidarBuf.getFirstTime(lidar_first_time);

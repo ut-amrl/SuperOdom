@@ -38,7 +38,7 @@
 #include <thread>
 #include <vector>
 
-enum class SensorType {VELODYNE, OUSTER, LIVOX};
+enum class SensorType {VELODYNE, OUSTER, LIVOX, VECTORNAV_ENU};
 extern std::string IMU_TOPIC;
 extern std::string LASER_TOPIC;
 extern std::string ODOM_TOPIC;
@@ -50,7 +50,8 @@ extern std::string WORLD_FRAME;
 extern std::string WORLD_FRAME_ROT;
 extern std::string SENSOR_FRAME;
 extern std::string SENSOR_FRAME_ROT;
-extern SensorType sensor;
+extern SensorType lidar_sensor;
+extern SensorType imu_sensor;
 
 extern int PROVIDE_IMU_LASER_EXTRINSIC;
 
@@ -116,7 +117,8 @@ extern bool USE_IMU_ROLL_PITCH;
 
 extern bool SAVE_PLY;
 
-extern std::string SENSOR; 
+extern std::string LIDAR_SENSOR;
+extern std::string IMU_SENSOR;
 
 extern Transformd T_ouster_sensor;
 
@@ -124,7 +126,26 @@ extern Eigen::Matrix3d ouster_sensor_R;
 
 extern Eigen::Vector3d ouster_sensor_T;
 
+// --- TF-based frame alignment ---
+extern bool USE_TF_ALIGNMENT;
+extern std::string BASE_FRAME;
+extern std::string IMU_FRAME;
+extern std::string LIDAR_FRAME;
+
+// Rotation matrices from sensor frame to base frame
+// Apply: v_base = R_base_sensor * v_sensor
+extern Eigen::Matrix3d R_base_imu;
+extern Eigen::Matrix3d R_base_lidar;
+extern Eigen::Vector3d t_base_imu;
+extern Eigen::Vector3d t_base_lidar;
+
+// Working extrinsic: identity rotation, translation-only (both sensors aligned to base)
+extern Transformd T_i_l_working;
+
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
+
+// Publish rectified (rotation-aligned) static TF frames
+void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node);
 

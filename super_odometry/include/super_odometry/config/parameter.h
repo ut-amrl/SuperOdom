@@ -17,10 +17,8 @@
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2/transform_datatypes.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 
 #include <algorithm>
 #include <array>
@@ -52,30 +50,60 @@ extern std::string WORLD_FRAME;
 extern std::string WORLD_FRAME_ROT;
 extern std::string SENSOR_FRAME;
 extern std::string SENSOR_FRAME_ROT;
-extern std::string LIDAR_FRAME_RECT;
-extern std::string IMU_FRAME_RECT;
 extern SensorType lidar_sensor;
 extern SensorType imu_sensor;
+
+extern int PROVIDE_IMU_LASER_EXTRINSIC;
+
+extern std::vector<Eigen::Matrix3d> RIC;
+
+extern std::vector<Eigen::Vector3d> TIC;
 
 extern Eigen::Matrix3d imu_laser_R;
 
 extern Eigen::Vector3d imu_laser_T;
 
+extern Eigen::Matrix3d cam_laser_R;
+
+extern Eigen::Vector3d cam_laser_T;
+
+extern Eigen::Matrix3d imu_camera_R;
+
+extern Eigen::Vector3d imu_camera_T;
+
+extern Eigen::Vector3d imu_laser_offset;
+
+extern Transformd Tcam_lidar;
+
+extern Transformd T_i_c;
+
 extern Transformd T_i_l;
 
 extern Transformd T_l_i;
 
-extern Transformd T_b_l;
-extern Transformd T_l_b;
-extern Transformd T_b_i;
-extern Transformd T_i_b;
-extern Transformd T_i_l_working;
-extern Transformd T_l_i_working;
-extern bool USE_BASE_FRAME_ROT_ALIGNMENT;
+extern float up_realsense_roll;
 
-extern std::string IMU_FRAME;
-extern std::string LIDAR_FRAME;
-extern std::string BASE_FRAME;
+extern float up_realsense_pitch;
+
+extern float up_realsense_yaw;
+
+extern float up_realsense_x;
+
+extern float up_realsense_y;
+
+extern float up_realsense_z;
+
+extern float down_realsense_roll;
+
+extern float down_realsense_pitch;
+
+extern float down_realsense_yaw;
+
+extern float down_realsense_x;
+
+extern float down_realsense_y;
+
+extern float down_realsense_z;
 
 extern float yaw_ratio;
 
@@ -92,12 +120,32 @@ extern bool SAVE_PLY;
 extern std::string LIDAR_SENSOR;
 extern std::string IMU_SENSOR;
 
+extern Transformd T_ouster_sensor;
+
+extern Eigen::Matrix3d ouster_sensor_R;
+
+extern Eigen::Vector3d ouster_sensor_T;
+
+// --- TF-based frame alignment ---
+extern bool USE_TF_ALIGNMENT;
+extern std::string BASE_FRAME;
+extern std::string IMU_FRAME;
+extern std::string LIDAR_FRAME;
+
+// Rotation matrices from sensor frame to base frame
+// Apply: v_base = R_base_sensor * v_sensor
+extern Eigen::Matrix3d R_base_imu;
+extern Eigen::Matrix3d R_base_lidar;
+extern Eigen::Vector3d t_base_imu;
+extern Eigen::Vector3d t_base_lidar;
+
+// Working extrinsic: identity rotation, translation-only (both sensors aligned to base)
+extern Transformd T_i_l_working;
+
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
 
+// Publish rectified (rotation-aligned) static TF frames
 void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node);
 
-const std::string& getWorkingLidarFrameId();
-
-const std::string& getWorkingImuFrameId();

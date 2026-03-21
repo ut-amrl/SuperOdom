@@ -34,6 +34,7 @@
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "super_odometry/utils/superodom_utils.h"
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 
 
 namespace super_odometry {
@@ -70,13 +71,11 @@ namespace super_odometry {
         float max_range;
         int filter_point_size;
         double voxel_leaf_size;
-        Eigen::Matrix3d level_R = Eigen::Matrix3d::Identity();  // leveling rotation from TF (base_link -> lidar_link)
         SensorType lidar_sensor;
         SensorType imu_sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
-        float imu_dt;
     };
 
     struct ImuMeasurement {
@@ -121,11 +120,12 @@ namespace super_odometry {
 
         void laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg);
 
-        // void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
-        void livoxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+        void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
 
-        void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in,
-            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float min_range, float max_range);
+        void livoxPcl2Handler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+
+        void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
+            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);
 
         void assignTimeforPointCloud(pcl::PointCloud<PointType>::Ptr laserCloudIn_ptr_);
         
@@ -143,7 +143,7 @@ namespace super_odometry {
 
         void manageLidarBuffer(pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud, double timestamp);
 
-        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu& msg);
+        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu::SharedPtr& msg);
 
         double calculateDeltaTime(double current_timestamp);
 
@@ -187,6 +187,7 @@ namespace super_odometry {
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdom;
         rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subLivoxCloud;
+        rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLivoxPcl2Cloud;
 
         // Publishers
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
@@ -207,6 +208,7 @@ namespace super_odometry {
         bool LASER_CAMERA_SYNC_SUCCESS = false;
         bool IMU_INIT=false;
         double m_imuPeriod;
+        double last_vectornav_enu_time_ = -1;
 
         super_odometry_msgs::msg::LaserFeature laserFeature;
         std_msgs::msg::Header FeatureHeader;

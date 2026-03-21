@@ -105,7 +105,8 @@ namespace super_odometry {
 
         void resetParams();
 
-        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, sensor_msgs::msg::Imu& thisImu);
+        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, 
+        sensor_msgs::msg::Imu& thisImu);
 
 
         void updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
@@ -171,7 +172,9 @@ namespace super_odometry {
 
 
     public:
-        // Extrinsic transforms between laser and imu (from TF/URDF)
+        //Modify the extrinsic matrxi between laser and imu, laser and camera
+        gtsam::Pose3 imu2cam;
+        gtsam::Pose3 cam2Lidar;
         gtsam::Pose3 imu2Lidar;
         gtsam::Pose3 lidar2Imu;
 
@@ -198,11 +201,12 @@ namespace super_odometry {
         double lastImuT_imu = -1;
         double lastImuT_opt = -1;
         double last_vectornav_enu_time = -1;
-        bool imu_yaw_initialized_ = false;
-        Eigen::Quaterniond imu_yaw_correction_ = Eigen::Quaterniond::Identity();
         int key = 1;
         int imuPreintegrationResetId = 0;
-        int frame_count = 0;
+
+        // TF alignment yaw correction state
+        bool imu_yaw_initialized_ = false;
+        Eigen::Quaterniond imu_yaw_correction_ = Eigen::Quaterniond::Identity();
 
         enum IMU_STATE : uint8_t {
         FAIL=0,    //lose imu information 

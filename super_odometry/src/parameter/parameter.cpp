@@ -4,13 +4,25 @@
 #include "super_odometry/config/parameter.h"
 
 #include <unordered_map>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 // Define color escape codes for ~beautification~
 #define RESET "\033[0m"
+#define BLACK "\033[30m"   /* Black */
+#define RED "\033[31m"     /* Red */
 #define GREEN "\033[32m"   /* Green */
+#define YELLOW "\033[33m"  /* Yellow */
 #define BLUE "\033[34m"    /* Blue */
+#define MAGENTA "\033[35m" /* Magenta */
+#define CYAN "\033[36m"    /* Cyan */
+#define WHITE "\033[37m"   /* White */
+
 #define BOLD "\033[1m"
+#define UNDERLINE "\033[4m"
+#define ITALIC "\033[3m"
 
 std::string IMU_TOPIC;
 std::string LASER_TOPIC;
@@ -23,38 +35,92 @@ std::string WORLD_FRAME;
 std::string WORLD_FRAME_ROT;
 std::string SENSOR_FRAME;
 std::string SENSOR_FRAME_ROT;
-std::string LIDAR_FRAME_RECT;
-std::string IMU_FRAME_RECT;
 SensorType lidar_sensor;
 SensorType imu_sensor;
 
-Eigen::Matrix3d imu_laser_R;
-Eigen::Vector3d imu_laser_T;
-Transformd T_i_l;
-Transformd T_l_i;
-Transformd T_b_l;
-Transformd T_l_b;
-Transformd T_b_i;
-Transformd T_i_b;
-Transformd T_i_l_working;
-Transformd T_l_i_working;
-bool USE_BASE_FRAME_ROT_ALIGNMENT = false;
+int PROVIDE_IMU_LASER_EXTRINSIC;
 
-std::string IMU_FRAME;
-std::string LIDAR_FRAME;
-std::string BASE_FRAME;
+Eigen::Matrix3d imu_laser_R;
+
+Eigen::Vector3d imu_laser_T;
+
+Eigen::Vector3d imu_laser_offset;
+
+Eigen::Matrix3d cam_laser_R;
+
+Eigen::Vector3d cam_laser_T;
+
+Eigen::Matrix3d imu_camera_R;
+
+Eigen::Vector3d imu_camera_T;
+
+Transformd Tcam_lidar;
+
+Transformd T_i_c;
+
+Transformd T_i_l;
+
+Transformd T_l_i;
+
+Transformd T_ouster_sensor;
+
+Eigen::Matrix3d ouster_sensor_R;
+
+Eigen::Vector3d ouster_sensor_T;
+
+float lidar_imu_offset_roll;
+
+float up_realsense_roll;
+
+float up_realsense_pitch;
+
+float up_realsense_yaw;
+
+float up_realsense_x;
+
+float up_realsense_y;
+
+float up_realsense_z;
+
+float down_realsense_roll;
+
+float down_realsense_pitch;
+
+float down_realsense_yaw;
+
+float down_realsense_x;
+
+float down_realsense_y;
+
+float down_realsense_z;
 
 float yaw_ratio;
 
 float IMU_ACC_X_LIMIT;
+
 float IMU_ACC_Y_LIMIT;
+
 float IMU_ACC_Z_LIMIT;
 
 bool USE_IMU_ROLL_PITCH;
+
 bool SAVE_PLY;
 
 std::string LIDAR_SENSOR;
 std::string IMU_SENSOR;
+
+// --- TF-based frame alignment globals ---
+bool USE_TF_ALIGNMENT = false;
+std::string BASE_FRAME;
+std::string IMU_FRAME;
+std::string LIDAR_FRAME;
+
+Eigen::Matrix3d R_base_imu = Eigen::Matrix3d::Identity();
+Eigen::Matrix3d R_base_lidar = Eigen::Matrix3d::Identity();
+Eigen::Vector3d t_base_imu = Eigen::Vector3d::Zero();
+Eigen::Vector3d t_base_lidar = Eigen::Vector3d::Zero();
+
+Transformd T_i_l_working;
 
 
 template <typename T>
@@ -74,165 +140,143 @@ T readParam(rclcpp::Node::SharedPtr node, std::string name)
 
 bool readCalibration(rclcpp::Node::SharedPtr node)
 {
-    RCLCPP_INFO(node->get_logger(), "[super_odometry] Reading extrinsics from TF (URDF)...");
+    // When using TF alignment, skip calibration file entirely
+    if (USE_TF_ALIGNMENT) {
+        RCLCPP_INFO(node->get_logger(), GREEN BOLD "[super_odometry] Using TF-based alignment — skipping calibration file" RESET);
 
-    // Frame names already declared in readGlobalparam()
-    yaw_ratio = node->get_parameter("yaw_ratio").as_double();
+        // Set extrinsics from TF-derived values
+        // T_i_l_working stays IMU->LiDAR for the deskew path.
+        // imu_laser_T follows the legacy imu^T_laser convention (LiDAR->IMU)
+        // used by IMU preintegration and centrifugal acceleration compensation.
+        imu_laser_R = Eigen::Matrix3d::Identity();
+        imu_laser_T = t_base_imu - t_base_lidar;
+        imu_laser_offset = Eigen::Vector3d::Zero();
 
-    RCLCPP_INFO(node->get_logger(), "imu_frame: %s, lidar_frame: %s, base_frame: %s",
-                IMU_FRAME.c_str(), LIDAR_FRAME.c_str(), BASE_FRAME.c_str());
-    RCLCPP_INFO(node->get_logger(), "yaw_ratio: %f", yaw_ratio);
+        T_i_l = T_i_l_working;
+        T_l_i = T_i_l.inverse();
 
-    // Create TF buffer and listener (spin_thread=true so it works before executor.spin())
-    auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
-    tf_buffer->setUsingDedicatedThread(true);
-    auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer, node, true);
+        PROVIDE_IMU_LASER_EXTRINSIC = 1;
+        yaw_ratio = 0.0;
 
-    auto lookup_tf = [&](const std::string &target, const std::string &source,
-                         geometry_msgs::msg::TransformStamped &out_tf) -> bool {
-        if (target == source) {
-            out_tf.header.frame_id = target;
-            out_tf.child_frame_id = source;
-            out_tf.transform.rotation.w = 1.0;
-            out_tf.transform.rotation.x = 0.0;
-            out_tf.transform.rotation.y = 0.0;
-            out_tf.transform.rotation.z = 0.0;
-            out_tf.transform.translation.x = 0.0;
-            out_tf.transform.translation.y = 0.0;
-            out_tf.transform.translation.z = 0.0;
-            return true;
-        }
-        try {
-            out_tf = tf_buffer->lookupTransform(
-                target, source, tf2::TimePointZero, std::chrono::seconds(10));
-            return true;
-        } catch (const tf2::TransformException &ex) {
-            RCLCPP_WARN(node->get_logger(),
-                        "Could not get TF %s -> %s: %s",
-                        target.c_str(), source.c_str(), ex.what());
-            return false;
-        }
-    };
+        // Zero out realsense params
+        up_realsense_roll = up_realsense_pitch = up_realsense_yaw = 0.0f;
+        up_realsense_x = up_realsense_y = up_realsense_z = 0.0f;
+        down_realsense_roll = down_realsense_pitch = down_realsense_yaw = 0.0f;
+        down_realsense_x = down_realsense_y = down_realsense_z = 0.0f;
 
-    auto tf_to_transformd = [](const geometry_msgs::msg::TransformStamped &tf_msg) -> Transformd {
-        const auto &rot = tf_msg.transform.rotation;
-        const auto &trans = tf_msg.transform.translation;
-        Eigen::Quaterniond q(rot.w, rot.x, rot.y, rot.z);
-        return Transformd(
-            q.normalized().toRotationMatrix(),
-            Eigen::Vector3d(trans.x, trans.y, trans.z));
-    };
+        RCLCPP_INFO_STREAM(node->get_logger(), GREEN BOLD "T_i_l_working (TF-based): \n" RESET << T_i_l_working.matrix());
 
-    // Look up imu_frame -> lidar_frame transform (T_i_l)
-    geometry_msgs::msg::TransformStamped tf_imu_lidar;
-    if (!lookup_tf(IMU_FRAME, LIDAR_FRAME, tf_imu_lidar)) {
-        RCLCPP_ERROR(node->get_logger(),
-                     "Could not get TF %s -> %s. Is robot_state_publisher running?",
-                     IMU_FRAME.c_str(), LIDAR_FRAME.c_str());
+        ouster_sensor_R << -1, 0,  0,
+                        0, -1, 0,
+                        0,  0,  1;
+        ouster_sensor_T << 0, 0, 0.036180;
+        T_ouster_sensor = Transformd(ouster_sensor_R, ouster_sensor_T);
+
+        return true;
+    }
+
+    // --- Legacy calibration file path ---
+    RCLCPP_INFO(node->get_logger(), "[super_odometry] read parameter (calibration file)");
+    std::string calib_file;
+    calib_file = node->declare_parameter("calibration_file", std::string(""));
+    RCLCPP_INFO(node->get_logger(), "[super_odometry] calib_file: %s", calib_file.c_str());
+    cv::FileStorage fsSettings(calib_file, cv::FileStorage::READ);
+    if (!fsSettings.isOpened()) {
+        std::cerr << "ERROR: Wrong path to settings" << std::endl;
         return false;
     }
+    PROVIDE_IMU_LASER_EXTRINSIC = node->declare_parameter("provide_imu_laser_extrinsic", true);
+    RCLCPP_INFO(node->get_logger(), "PROVIDE_IMU_LASER_EXTRINSIC: %d", PROVIDE_IMU_LASER_EXTRINSIC);
 
-    // Convert to Eigen
-    const auto &rot = tf_imu_lidar.transform.rotation;
-    const auto &trans = tf_imu_lidar.transform.translation;
-    Eigen::Quaterniond q(rot.w, rot.x, rot.y, rot.z);
-    imu_laser_R = q.normalized().toRotationMatrix();
-    imu_laser_T = Eigen::Vector3d(trans.x, trans.y, trans.z);
+    up_realsense_roll = fsSettings["up_realsense_roll"];
+    up_realsense_pitch = fsSettings["up_realsense_pitch"];
+    up_realsense_yaw = fsSettings["up_realsense_yaw"];
+    up_realsense_x = fsSettings["up_realsense_x"];
+    up_realsense_y = fsSettings["up_realsense_y"];
+    up_realsense_z = fsSettings["up_realsense_z"];
 
-    T_i_l = Transformd(imu_laser_R, imu_laser_T);
-    T_l_i = T_i_l.inverse();
+    down_realsense_roll = fsSettings["down_realsense_roll"];
+    down_realsense_pitch = fsSettings["down_realsense_pitch"];
+    down_realsense_yaw = fsSettings["down_realsense_yaw"];
+    down_realsense_x = fsSettings["down_realsense_x"];
+    down_realsense_y = fsSettings["down_realsense_y"];
+    down_realsense_z = fsSettings["down_realsense_z"];
+    
+    yaw_ratio=fsSettings["yaw_ratio"];
 
-    // Log the result
-    double roll, pitch, yaw;
-    tf2::Quaternion tf2_q(rot.x, rot.y, rot.z, rot.w);
-    tf2::Matrix3x3(tf2_q).getRPY(roll, pitch, yaw);
-    RCLCPP_INFO(node->get_logger(), GREEN BOLD "Extrinsic from TF (%s -> %s):" RESET,
-                IMU_FRAME.c_str(), LIDAR_FRAME.c_str());
-    RCLCPP_INFO(node->get_logger(), "  roll: %.2f deg, pitch: %.2f deg, yaw: %.2f deg",
-                roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI);
-    RCLCPP_INFO(node->get_logger(), "  translation: [%.6f, %.6f, %.6f]",
-                imu_laser_T.x(), imu_laser_T.y(), imu_laser_T.z());
-    RCLCPP_INFO_STREAM(node->get_logger(), GREEN BOLD "T_i_l Extrinsic:\n" RESET << T_i_l.matrix());
-    RCLCPP_INFO_STREAM(node->get_logger(), GREEN BOLD "T_l_i Extrinsic:\n" RESET << T_l_i.matrix());
+    RCLCPP_INFO(node->get_logger(), "yaw ratio: %f", yaw_ratio);
+    
+    if (PROVIDE_IMU_LASER_EXTRINSIC)
+    {
+        cv::Mat cv_R, cv_T;
+        cv::Mat imu_laser_rotation_offset;
+        fsSettings["imu_laser_rotation_offset"] >> imu_laser_rotation_offset;
+        fsSettings["extrinsicRotation_imu_laser"] >> cv_R;
+        fsSettings["extrinsicTranslation_imu_laser"] >> cv_T;
+        cv::cv2eigen(cv_R, imu_laser_R);
+        cv::cv2eigen(cv_T, imu_laser_T);
+        cv::cv2eigen(imu_laser_rotation_offset, imu_laser_offset);
 
-    // Base-frame alignment transforms (rotation-first sensor normalization)
-    geometry_msgs::msg::TransformStamped tf_base_lidar;
-    geometry_msgs::msg::TransformStamped tf_base_imu;
-    const bool got_base_lidar = lookup_tf(BASE_FRAME, LIDAR_FRAME, tf_base_lidar);
-    const bool got_base_imu = lookup_tf(BASE_FRAME, IMU_FRAME, tf_base_imu);
+        T_i_l = Transformd(imu_laser_R, imu_laser_T);
+        T_l_i = T_i_l.inverse();   
 
-    if (got_base_lidar && got_base_imu) {
-        T_b_l = tf_to_transformd(tf_base_lidar);
-        T_l_b = T_b_l.inverse();
-        T_b_i = tf_to_transformd(tf_base_imu);
-        T_i_b = T_b_i.inverse();
-        T_i_l_working = Transformd(
-            Eigen::Matrix3d::Identity(),
-            T_b_l.pos - T_b_i.pos);
-        T_l_i_working = T_i_l_working.inverse();
-        USE_BASE_FRAME_ROT_ALIGNMENT = true;
+        double roll, pitch, yaw;
+        tf2::Quaternion orientation_pre(T_i_l.rot.x(), T_i_l.rot.y(), T_i_l.rot.z(), T_i_l.rot.w());
+        tf2::Matrix3x3(orientation_pre).getRPY(roll, pitch, yaw);
+        RCLCPP_INFO(node->get_logger(), BLUE"\n previous roll: %f previous pitch: %f previous yaw: %f" RESET, roll *180/M_PI, pitch *180/M_PI, yaw *180/M_PI); 
 
-        RCLCPP_INFO(node->get_logger(),
-                    GREEN BOLD "Base-frame rotation alignment enabled using TF (%s)." RESET,
-                    BASE_FRAME.c_str());
-        RCLCPP_INFO_STREAM(node->get_logger(),
-                           GREEN BOLD "Working rectified T_i_l:\n" RESET
-                               << T_i_l_working.matrix());
-    } else {
-        T_b_l = Transformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
-        T_l_b = T_b_l.inverse();
-        T_b_i = Transformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
-        T_i_b = T_b_i.inverse();
-        T_i_l_working = T_i_l;
-        T_l_i_working = T_l_i;
-        USE_BASE_FRAME_ROT_ALIGNMENT = false;
-        RCLCPP_WARN(node->get_logger(),
-                    "Base-frame TF lookup incomplete. Running without base-frame rotation alignment.");
+        tf2::Quaternion IMU_LASER_R_offset;
+        IMU_LASER_R_offset.setRPY(imu_laser_offset[0]* M_PI / 180, imu_laser_offset[1] * M_PI / 180, 
+                            imu_laser_offset[2]* M_PI / 180);
+
+        tf2::Quaternion IMU_LASER_R(T_i_l.rot.x(), T_i_l.rot.y(), T_i_l.rot.z(),
+                                                        T_i_l.rot.w());
+        tf2::Quaternion IMU_LASER = IMU_LASER_R_offset * IMU_LASER_R;
+        Eigen::Quaterniond imu_laser_rot;             
+        imu_laser_rot = Eigen::Quaterniond(IMU_LASER.w(), IMU_LASER.x(), IMU_LASER.y(),
+                                                      IMU_LASER.z());
+         
+        T_i_l.rot=imu_laser_rot;
+        T_l_i = T_i_l.inverse(); 
+        imu_laser_R=T_i_l.rot.toRotationMatrix();
+        
+        RCLCPP_INFO_STREAM(node->get_logger(),  GREEN BOLD "T_i_l Extrinsic : \n" << T_i_l.matrix());
+        RCLCPP_INFO_STREAM(node->get_logger(),  GREEN BOLD "T_l_i Extrinsic : \n" << T_l_i.matrix()); 
     }
+    else
+    {
+        cv::Mat cv_R, cv_T;
+        fsSettings["extrinsicRotation_camera_laser"] >> cv_R;
+        fsSettings["extrinsicTranslation_camera_laser"] >> cv_T;
+        cv::cv2eigen(cv_R, cam_laser_R);
+        cv::cv2eigen(cv_T, cam_laser_T);
+
+        Tcam_lidar = Transformd(cam_laser_R, cam_laser_T);
+
+        fsSettings["extrinsicRotation_imu_camera"] >> cv_R;
+        fsSettings["extrinsicTranslation_imu_camera"] >> cv_T;
+
+        cv::cv2eigen(cv_R, imu_camera_R);
+        cv::cv2eigen(cv_T, imu_camera_T);
+        Eigen::Quaterniond Q(imu_camera_R);
+        imu_camera_R = Q.normalized();
+
+        T_i_c = Transformd(imu_camera_R, imu_camera_T);
+
+        T_i_l = T_i_c * Tcam_lidar;
+        T_l_i = T_i_l.inverse();
+
+        RCLCPP_INFO_STREAM(node->get_logger(),  GREEN BOLD "T_i_l Extrinsic : \n" << T_i_l.matrix());
+        RCLCPP_INFO_STREAM(node->get_logger(),  GREEN BOLD "T_l_i Extrinsic : \n" << T_l_i.matrix());
+    }
+
+    ouster_sensor_R << -1, 0,  0,
+                    0, -1, 0,
+                    0,  0,  1;
+    ouster_sensor_T << 0, 0, 0.036180;
+    T_ouster_sensor = Transformd(ouster_sensor_R, ouster_sensor_T);
 
     return true;
-}
-
-void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node)
-{
-    if (!USE_BASE_FRAME_ROT_ALIGNMENT) {
-        return;
-    }
-
-    static auto static_broadcaster =
-        std::make_shared<tf2_ros::StaticTransformBroadcaster>(node);
-
-    auto make_rectified_tf =
-        [&](const std::string &child_frame, const Eigen::Vector3d &translation)
-            -> geometry_msgs::msg::TransformStamped {
-        geometry_msgs::msg::TransformStamped tf_msg;
-        tf_msg.header.stamp = node->get_clock()->now();
-        tf_msg.header.frame_id = BASE_FRAME;
-        tf_msg.child_frame_id = child_frame;
-        tf_msg.transform.translation.x = translation.x();
-        tf_msg.transform.translation.y = translation.y();
-        tf_msg.transform.translation.z = translation.z();
-        tf_msg.transform.rotation.w = 1.0;
-        tf_msg.transform.rotation.x = 0.0;
-        tf_msg.transform.rotation.y = 0.0;
-        tf_msg.transform.rotation.z = 0.0;
-        return tf_msg;
-    };
-
-    std::vector<geometry_msgs::msg::TransformStamped> transforms;
-    transforms.push_back(make_rectified_tf(LIDAR_FRAME_RECT, T_b_l.pos));
-    transforms.push_back(make_rectified_tf(IMU_FRAME_RECT, T_b_i.pos));
-    static_broadcaster->sendTransform(transforms);
-}
-
-const std::string& getWorkingLidarFrameId()
-{
-    return USE_BASE_FRAME_ROT_ALIGNMENT ? LIDAR_FRAME_RECT : LIDAR_FRAME;
-}
-
-const std::string& getWorkingImuFrameId()
-{
-    return USE_BASE_FRAME_ROT_ALIGNMENT ? IMU_FRAME_RECT : IMU_FRAME;
 }
 
 bool readGlobalparam(rclcpp::Node::SharedPtr node)
@@ -254,12 +298,12 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     node->declare_parameter<double>("imu_acc_z_limit", 0.4);
     node->declare_parameter<bool>("save_ply", false);
     node->declare_parameter<bool>("use_imu_roll_pitch", false);
+    // TF alignment params
+    node->declare_parameter<bool>("use_tf_alignment", false);
+    node->declare_parameter<std::string>("base_link_frame", "base_link");
     node->declare_parameter<std::string>("imu_frame", "imu_link");
     node->declare_parameter<std::string>("lidar_frame", "lidar_link");
-    node->declare_parameter<std::string>("base_frame", "base_link");
-    node->declare_parameter<double>("yaw_ratio", 0.0);
 
-    
     LASER_TOPIC = node->get_parameter("laser_topic").as_string();
     IMU_TOPIC = node->get_parameter("imu_topic").as_string();
     ODOM_TOPIC = node->get_parameter("odom_topic").as_string();
@@ -280,12 +324,14 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     IMU_ACC_X_LIMIT = node->get_parameter("imu_acc_x_limit").as_double();
     IMU_ACC_Y_LIMIT = node->get_parameter("imu_acc_y_limit").as_double();
     IMU_ACC_Z_LIMIT = node->get_parameter("imu_acc_z_limit").as_double();
+
+    // TF alignment
+    USE_TF_ALIGNMENT = node->get_parameter("use_tf_alignment").as_bool();
+    BASE_FRAME = node->get_parameter("base_link_frame").as_string();
     IMU_FRAME = node->get_parameter("imu_frame").as_string();
     LIDAR_FRAME = node->get_parameter("lidar_frame").as_string();
-    BASE_FRAME = node->get_parameter("base_frame").as_string();
-    LIDAR_FRAME_RECT = LIDAR_FRAME + "_rect";
-    IMU_FRAME_RECT = IMU_FRAME + "_rect";
-    //check whether sensor is support 
+
+    // Sensor type mapping
     const std::unordered_map<std::string, SensorType> sensorTypeMap = {
         {"velodyne", SensorType::VELODYNE},
         {"ouster", SensorType::OUSTER},
@@ -294,34 +340,127 @@ bool readGlobalparam(rclcpp::Node::SharedPtr node)
     };
 
     if (sensorTypeMap.find(LIDAR_SENSOR) == sensorTypeMap.end()) {
-        RCLCPP_ERROR(node->get_logger(), "Unsupported sensor type: %s", LIDAR_SENSOR.c_str());
+        RCLCPP_ERROR(node->get_logger(), "Unsupported lidar sensor type: %s", LIDAR_SENSOR.c_str());
         return false;
     }
     if (sensorTypeMap.find(IMU_SENSOR) == sensorTypeMap.end()) {
         RCLCPP_ERROR(node->get_logger(), "Unsupported IMU sensor type: %s", IMU_SENSOR.c_str());
         return false;
     }
-
     lidar_sensor = sensorTypeMap.at(LIDAR_SENSOR);
     imu_sensor = sensorTypeMap.at(IMU_SENSOR);
-    
+
+    // --- TF Lookup ---
+    if (USE_TF_ALIGNMENT) {
+        RCLCPP_INFO(node->get_logger(), CYAN BOLD "[TF Alignment] Looking up transforms: %s → %s, %s → %s" RESET,
+                    BASE_FRAME.c_str(), IMU_FRAME.c_str(), BASE_FRAME.c_str(), LIDAR_FRAME.c_str());
+
+        auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+        auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
+
+        // Wait for transforms to become available
+        bool got_imu_tf = false, got_lidar_tf = false;
+        for (int attempt = 0; attempt < 50 && (!got_imu_tf || !got_lidar_tf); ++attempt) {
+            rclcpp::sleep_for(std::chrono::milliseconds(100));
+            rclcpp::spin_some(node);
+
+            if (!got_imu_tf) {
+                try {
+                    auto tf_base_imu = tf_buffer->lookupTransform(BASE_FRAME, IMU_FRAME, tf2::TimePointZero);
+                    auto& r = tf_base_imu.transform.rotation;
+                    auto& t = tf_base_imu.transform.translation;
+                    Eigen::Quaterniond q(r.w, r.x, r.y, r.z);
+                    q.normalize();
+                    R_base_imu = q.toRotationMatrix();
+                    t_base_imu = Eigen::Vector3d(t.x, t.y, t.z);
+                    got_imu_tf = true;
+                    RCLCPP_INFO(node->get_logger(), GREEN "[TF] Got %s → %s transform" RESET, BASE_FRAME.c_str(), IMU_FRAME.c_str());
+                } catch (const tf2::TransformException&) {}
+            }
+
+            if (!got_lidar_tf) {
+                try {
+                    auto tf_base_lidar = tf_buffer->lookupTransform(BASE_FRAME, LIDAR_FRAME, tf2::TimePointZero);
+                    auto& r = tf_base_lidar.transform.rotation;
+                    auto& t = tf_base_lidar.transform.translation;
+                    Eigen::Quaterniond q(r.w, r.x, r.y, r.z);
+                    q.normalize();
+                    R_base_lidar = q.toRotationMatrix();
+                    t_base_lidar = Eigen::Vector3d(t.x, t.y, t.z);
+                    got_lidar_tf = true;
+                    RCLCPP_INFO(node->get_logger(), GREEN "[TF] Got %s → %s transform" RESET, BASE_FRAME.c_str(), LIDAR_FRAME.c_str());
+                } catch (const tf2::TransformException&) {}
+            }
+        }
+
+        if (!got_imu_tf || !got_lidar_tf) {
+            RCLCPP_ERROR(node->get_logger(), RED "[TF] Failed to get TF transforms after 5s! Make sure robot_state_publisher is running." RESET);
+            return false;
+        }
+
+        // Compute T_i_l_working: translation-only (identity rotation)
+        // In the rectified frames, both sensors are rotation-aligned to base,
+        // so the extrinsic is purely translational.
+        Eigen::Vector3d t_i_l_working = t_base_lidar - t_base_imu;
+        T_i_l_working = Transformd(Eigen::Matrix3d::Identity(), t_i_l_working);
+
+        RCLCPP_INFO_STREAM(node->get_logger(), CYAN BOLD "\n[TF] R_base_imu:\n" RESET << R_base_imu);
+        RCLCPP_INFO_STREAM(node->get_logger(), CYAN BOLD "\n[TF] R_base_lidar:\n" RESET << R_base_lidar);
+        RCLCPP_INFO_STREAM(node->get_logger(), CYAN BOLD "\n[TF] t_base_imu: " RESET << t_base_imu.transpose());
+        RCLCPP_INFO_STREAM(node->get_logger(), CYAN BOLD "\n[TF] t_base_lidar: " RESET << t_base_lidar.transpose());
+        RCLCPP_INFO_STREAM(node->get_logger(), CYAN BOLD "\n[TF] T_i_l_working:\n" RESET << T_i_l_working.matrix());
+    }
+
     RCLCPP_INFO(node->get_logger(), "LASER_TOPIC %s", LASER_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "IMU_TOPIC %s", IMU_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "ODOM_TOPIC %s", ODOM_TOPIC.c_str());
-    RCLCPP_INFO(node->get_logger(), "DepthUP_TOPIC %s", DepthUP_TOPIC.c_str());
-    RCLCPP_INFO(node->get_logger(), "DepthDown_TOPIC %s", DepthDown_TOPIC.c_str());
     RCLCPP_INFO(node->get_logger(), "WORLD_FRAME %s", WORLD_FRAME.c_str());
-    RCLCPP_INFO(node->get_logger(), "WORLD_FRAME_ROT %s", WORLD_FRAME_ROT.c_str());
     RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME %s", SENSOR_FRAME.c_str());
-    RCLCPP_INFO(node->get_logger(), "SENSOR_FRAME_ROT %s", SENSOR_FRAME_ROT.c_str());
-    RCLCPP_INFO(node->get_logger(), "LIDAR_FRAME_RECT %s", LIDAR_FRAME_RECT.c_str());
-    RCLCPP_INFO(node->get_logger(), "IMU_FRAME_RECT %s", IMU_FRAME_RECT.c_str());
     RCLCPP_INFO(node->get_logger(), "ProjectName %s", ProjectName.c_str());
     RCLCPP_INFO(node->get_logger(), "LIDAR_SENSOR %s", LIDAR_SENSOR.c_str());
     RCLCPP_INFO(node->get_logger(), "IMU_SENSOR %s", IMU_SENSOR.c_str());
+    RCLCPP_INFO(node->get_logger(), "USE_TF_ALIGNMENT %d", USE_TF_ALIGNMENT);
     RCLCPP_INFO(node->get_logger(), "USE_IMU_ROLL_PITCH %d", USE_IMU_ROLL_PITCH);
-    RCLCPP_INFO(node->get_logger(), "SAVE_PLY %d", SAVE_PLY);
     RCLCPP_INFO(node->get_logger(), "SAVE_PLY %d", SAVE_PLY);
 
     return true;
+}
+
+// ---- Publish rectified static TF frames ----
+// These frames share the same origin as the original sensor frames
+// but are rotation-aligned to base_link.
+void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node) {
+    if (!USE_TF_ALIGNMENT) return;
+
+    static auto static_broadcaster = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node);
+
+    auto makeRectifiedTransform = [&](const std::string& parent,
+                                      const std::string& child,
+                                      const Eigen::Vector3d& translation) {
+        geometry_msgs::msg::TransformStamped ts;
+        ts.header.stamp = node->now();
+        ts.header.frame_id = parent;
+        ts.child_frame_id = child;
+        ts.transform.translation.x = translation.x();
+        ts.transform.translation.y = translation.y();
+        ts.transform.translation.z = translation.z();
+        // Identity rotation (aligned to base)
+        ts.transform.rotation.w = 1.0;
+        ts.transform.rotation.x = 0.0;
+        ts.transform.rotation.y = 0.0;
+        ts.transform.rotation.z = 0.0;
+        return ts;
+    };
+
+    std::vector<geometry_msgs::msg::TransformStamped> transforms;
+    transforms.push_back(makeRectifiedTransform(BASE_FRAME, IMU_FRAME + "_rect", t_base_imu));
+    transforms.push_back(makeRectifiedTransform(BASE_FRAME, LIDAR_FRAME + "_rect", t_base_lidar));
+    static_broadcaster->sendTransform(transforms);
+
+    // Update SENSOR_FRAME to use the rectified lidar frame for odometry output
+    SENSOR_FRAME = LIDAR_FRAME + "_rect";
+    SENSOR_FRAME_ROT = LIDAR_FRAME + "_rect_rot";
+
+    RCLCPP_INFO(node->get_logger(), GREEN BOLD "[TF] Published rectified frames: %s_rect, %s_rect" RESET,
+                IMU_FRAME.c_str(), LIDAR_FRAME.c_str());
 }

@@ -41,7 +41,10 @@ namespace super_odometry {
             RCLCPP_ERROR(this->get_logger(), "[AriseSlam::laserMapping] Could not read parameters. Exiting...");
             rclcpp::shutdown();
         }
-        publishRectifiedWorkingFrames(shared_from_this());
+
+        if (USE_TF_ALIGNMENT) {
+            publishRectifiedWorkingFrames(shared_from_this());
+        }
 
         RCLCPP_INFO(this->get_logger(), "DEBUG VIEW: %d", config_.debug_view_enabled);
         RCLCPP_INFO(this->get_logger(), "ENABLE OUSTER DATA: %d", config_.enable_ouster_data);
@@ -287,10 +290,10 @@ void laserMapping::initializeFirstFrame(){
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
-        if (!USE_BASE_FRAME_ROT_ALIGNMENT) {
-            auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
+        if (!USE_TF_ALIGNMENT) {
+            auto q_extrinsic = Eigen::Quaterniond(imu_laser_R);
             q_extrinsic.normalize();
-            q_w_curr=q_extrinsic.inverse()*q_w_curr;
+            q_w_curr = q_extrinsic.inverse() * q_w_curr;
         }
         
         
@@ -415,7 +418,6 @@ return PredictionSource::CONSTANT_VELOCITY;
 }
 
     void laserMapping::publishTopic(){
-        const std::string &output_lidar_frame = getWorkingLidarFrameId();
 
         TicToc t_pub;
         std_msgs::msg::String prediction_source_msg;
@@ -508,7 +510,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
         nav_msgs::msg::Odometry odomAftMapped;
         odomAftMapped.header.frame_id = WORLD_FRAME;
-        odomAftMapped.child_frame_id = output_lidar_frame;
+        odomAftMapped.child_frame_id = SENSOR_FRAME;
         odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
 
         odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -534,7 +536,7 @@ return PredictionSource::CONSTANT_VELOCITY;
         {
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id = output_lidar_frame;
+            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
             laserOdomIncremental.pose.pose.position.x = t_w_curr.x();
             laserOdomIncremental.pose.pose.position.y = t_w_curr.y();
             laserOdomIncremental.pose.pose.position.z = t_w_curr.z();
@@ -551,7 +553,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id = output_lidar_frame;
+            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
             laserOdomIncremental.pose.pose.position.x = laser_incremental_T.pos.x();
             laserOdomIncremental.pose.pose.position.y = laser_incremental_T.pos.y();
             laserOdomIncremental.pose.pose.position.z = laser_incremental_T.pos.z();
@@ -734,7 +736,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
     void laserMapping::updatePoseAndPublish(){
 
-        //1. Update pose
+        //1. Update pose 
         q_w_curr=slam.T_w_lidar.rot;
         t_w_curr=slam.T_w_lidar.pos;
         T_w_lidar.rot=slam.T_w_lidar.rot;
@@ -744,17 +746,6 @@ return PredictionSource::CONSTANT_VELOCITY;
         slam.frame_count=frameCount;
         slam.laser_imu_sync=laser_imu_sync;
         initialization = true;
-
-        // DEBUG: Print laser_odometry pose to check for tilt
-        if (frameCount % 10 == 0) {
-            double roll, pitch, yaw;
-            tf2::Quaternion q_debug(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w());
-            tf2::Matrix3x3(q_debug).getRPY(roll, pitch, yaw);
-            RCLCPP_INFO(this->get_logger(),
-                "[DEBUG] laser_odom frame=%d pos=[%.3f, %.3f, %.3f] rpy=[%.2f, %.2f, %.2f] deg",
-                frameCount, t_w_curr.x(), t_w_curr.y(), t_w_curr.z(),
-                roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI);
-        }
 
         // Calculate linear and angular velocity
         double dt = timeLaserOdometry - timeLaserOdometryPrev;

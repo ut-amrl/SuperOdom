@@ -28,22 +28,21 @@ namespace super_odometry {
         {
             RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::laserMapping] Could not read calibration. Exiting...");
             rclcpp::shutdown();
+            return;
         }
 
         if (!readParameters())
         {
             RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::laserMapping] Could not read parameters. Exiting...");
             rclcpp::shutdown();
+            return;
         }
 
         if (!readCalibration(shared_from_this()))
         {
             RCLCPP_ERROR(this->get_logger(), "[AriseSlam::laserMapping] Could not read parameters. Exiting...");
             rclcpp::shutdown();
-        }
-
-        if (USE_TF_ALIGNMENT) {
-            publishRectifiedWorkingFrames(shared_from_this());
+            return;
         }
 
         RCLCPP_INFO(this->get_logger(), "DEBUG VIEW: %d", config_.debug_view_enabled);
@@ -290,11 +289,9 @@ void laserMapping::initializeFirstFrame(){
         tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
-        if (!USE_TF_ALIGNMENT) {
-            auto q_extrinsic = Eigen::Quaterniond(imu_laser_R);
-            q_extrinsic.normalize();
-            q_w_curr = q_extrinsic.inverse() * q_w_curr;
-        }
+        auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
+        q_extrinsic.normalize();
+        q_w_curr=q_extrinsic.inverse()*q_w_curr;
         
         
     }else{
@@ -510,7 +507,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
         nav_msgs::msg::Odometry odomAftMapped;
         odomAftMapped.header.frame_id = WORLD_FRAME;
-        odomAftMapped.child_frame_id = SENSOR_FRAME;
+        odomAftMapped.child_frame_id = BASE_LINK_FRAME;
         odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
 
         odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -518,9 +515,11 @@ return PredictionSource::CONSTANT_VELOCITY;
         odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
         odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
 
-        odomAftMapped.pose.pose.position.x = t_w_curr.x();
-        odomAftMapped.pose.pose.position.y = t_w_curr.y();
-        odomAftMapped.pose.pose.position.z = t_w_curr.z();
+        const Eigen::Vector3d t_w_base = t_w_curr - q_w_curr * T_BASE_LIDAR;
+
+        odomAftMapped.pose.pose.position.x = t_w_base.x();
+        odomAftMapped.pose.pose.position.y = t_w_base.y();
+        odomAftMapped.pose.pose.position.z = t_w_base.z();
 
         odomAftMapped.twist.twist.linear.x = vel_b.x();
         odomAftMapped.twist.twist.linear.y = vel_b.y();
@@ -536,10 +535,10 @@ return PredictionSource::CONSTANT_VELOCITY;
         {
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
-            laserOdomIncremental.pose.pose.position.x = t_w_curr.x();
-            laserOdomIncremental.pose.pose.position.y = t_w_curr.y();
-            laserOdomIncremental.pose.pose.position.z = t_w_curr.z();
+            laserOdomIncremental.child_frame_id =  BASE_LINK_FRAME;
+            laserOdomIncremental.pose.pose.position.x = t_w_base.x();
+            laserOdomIncremental.pose.pose.position.y = t_w_base.y();
+            laserOdomIncremental.pose.pose.position.z = t_w_base.z();
             laserOdomIncremental.pose.pose.orientation.x = q_w_curr.x();
             laserOdomIncremental.pose.pose.orientation.y = q_w_curr.y();
             laserOdomIncremental.pose.pose.orientation.z = q_w_curr.z();
@@ -553,10 +552,11 @@ return PredictionSource::CONSTANT_VELOCITY;
 
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
-            laserOdomIncremental.pose.pose.position.x = laser_incremental_T.pos.x();
-            laserOdomIncremental.pose.pose.position.y = laser_incremental_T.pos.y();
-            laserOdomIncremental.pose.pose.position.z = laser_incremental_T.pos.z();
+            laserOdomIncremental.child_frame_id =  BASE_LINK_FRAME;
+            const Eigen::Vector3d t_w_base_incremental = laser_incremental_T.pos - laser_incremental_T.rot * T_BASE_LIDAR;
+            laserOdomIncremental.pose.pose.position.x = t_w_base_incremental.x();
+            laserOdomIncremental.pose.pose.position.y = t_w_base_incremental.y();
+            laserOdomIncremental.pose.pose.position.z = t_w_base_incremental.z();
             laserOdomIncremental.pose.pose.orientation.x = laser_incremental_T.rot.x();
             laserOdomIncremental.pose.pose.orientation.y = laser_incremental_T.rot.y();
             laserOdomIncremental.pose.pose.orientation.z = laser_incremental_T.rot.z();

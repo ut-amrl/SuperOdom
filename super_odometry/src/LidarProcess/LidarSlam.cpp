@@ -216,17 +216,17 @@ namespace super_odometry {
     }
 
 
-    ceres::Problem LidarSLAM::setupOptimizationProblem(const tbb::concurrent_vector<OptimizationParameter>&features_corres,
+    ceres::Problem LidarSLAM::setupOptimizationProblem(const tbb::concurrent_vector<OptimizationParameter>&features_corres, 
                                                        PredictionSource predictsource, const Transformd&position){
-        ceres::Problem::Options problem_options;
+        ceres::Problem::Options problem_options; 
         ceres::Problem problem(problem_options);
         problem.AddParameterBlock(pose_parameters, 7, new PoseLocalParameterization());
 
         //Add feature constraints
         addFeatureConstraints(problem, features_corres);
 
-
-        //Add absolute pose constraints if needed
+       
+        //Add absolute pose constraints if needed 
         if(shouldAddAbsolutePoseConstraints(predictsource)){
             addAbsolutePoseConstraints(problem,position, features_corres.size());
         }

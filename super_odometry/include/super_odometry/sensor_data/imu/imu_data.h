@@ -141,9 +141,8 @@ public:
 
 
     std::cout<<"imu_laser_R: "<<imu_laser_R<<std::endl;
-    imu_laser_R_Gravity =
-        Roll_Pitch_Gravity_Matrix.inverse() * T_i_l_working.rot.toRotationMatrix();
-    Transformd imu_laser_transform_gravity_(imu_laser_R_Gravity, T_i_l_working.pos); 
+    imu_laser_R_Gravity=Roll_Pitch_Gravity_Matrix.inverse()*imu_laser_R;
+    Transformd imu_laser_transform_gravity_(imu_laser_R_Gravity, imu_laser_T); 
     imu_laser_gravity_Transform=imu_laser_transform_gravity_;
     std::cout<<"imu_laser_extrinsic_gravity: "<<imu_laser_gravity_Transform<<std::endl;    
       

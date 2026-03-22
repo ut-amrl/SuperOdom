@@ -2,6 +2,7 @@
 //
 
 #include "super_odometry/utils/superodom_utils.h"
+#include "super_odometry/config/parameter.h"
 #include <iostream>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -192,7 +193,11 @@ tf2::Quaternion extractRollPitch(Eigen::Quaterniond& imu_rotation){
     tf2::Matrix3x3(orientation).getRPY(imu_roll, imu_pitch, imu_yaw);
     tf2::Quaternion quat ;
     quat.setRPY(imu_roll,imu_pitch, 0.0);
-    RCLCPP_INFO(rclcpp::get_logger("super_odometry"), "Using IMU Roll Pitch in ICP: %f %f %f", imu_roll, imu_pitch, imu_yaw);
+    if (LOG_IMU_ROLL_PITCH_ICP) {
+        RCLCPP_INFO(rclcpp::get_logger("super_odometry"),
+                    "Using IMU Roll Pitch in ICP: %f %f %f",
+                    imu_roll, imu_pitch, imu_yaw);
+    }
     return quat;
 }
 

@@ -18,6 +18,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/transform_datatypes.h>
+#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
 #include <algorithm>
@@ -38,7 +39,7 @@
 #include <thread>
 #include <vector>
 
-enum class SensorType {VELODYNE, OUSTER, LIVOX, VECTORNAV_ENU};
+enum class SensorType {VELODYNE, OUSTER, LIVOX, VECTORNAV};
 extern std::string IMU_TOPIC;
 extern std::string LASER_TOPIC;
 extern std::string ODOM_TOPIC;
@@ -48,8 +49,16 @@ extern std::string ProjectName;
 
 extern std::string WORLD_FRAME;
 extern std::string WORLD_FRAME_ROT;
-extern std::string SENSOR_FRAME;
-extern std::string SENSOR_FRAME_ROT;
+extern std::string LIDAR_FRAME_RECTIFIED;
+extern std::string BASE_LINK_FRAME;
+extern std::string IMU_FRAME_NAME;
+extern std::string LIDAR_FRAME_NAME;
+extern std::string IMU_FRAME_RECTIFIED;
+extern bool USE_TF_ALIGNMENT;
+extern Eigen::Quaterniond Q_IMU_TO_BASE;
+extern Eigen::Quaterniond Q_LIDAR_TO_BASE;
+extern Eigen::Vector3d T_BASE_IMU;
+extern Eigen::Vector3d T_BASE_LIDAR;
 extern SensorType lidar_sensor;
 extern SensorType imu_sensor;
 
@@ -113,12 +122,14 @@ extern float IMU_ACC_Y_LIMIT;
 
 extern float IMU_ACC_Z_LIMIT;
 
+extern double IMU_MIN_DT;
 extern bool USE_IMU_ROLL_PITCH;
+extern bool LOG_IMU_ROLL_PITCH_ICP;
 
 extern bool SAVE_PLY;
 
-extern std::string LIDAR_SENSOR;
-extern std::string IMU_SENSOR;
+extern std::string LIDAR_SENSOR; 
+extern std::string IMU_SENSOR; 
 
 extern Transformd T_ouster_sensor;
 
@@ -126,26 +137,7 @@ extern Eigen::Matrix3d ouster_sensor_R;
 
 extern Eigen::Vector3d ouster_sensor_T;
 
-// --- TF-based frame alignment ---
-extern bool USE_TF_ALIGNMENT;
-extern std::string BASE_FRAME;
-extern std::string IMU_FRAME;
-extern std::string LIDAR_FRAME;
-
-// Rotation matrices from sensor frame to base frame
-// Apply: v_base = R_base_sensor * v_sensor
-extern Eigen::Matrix3d R_base_imu;
-extern Eigen::Matrix3d R_base_lidar;
-extern Eigen::Vector3d t_base_imu;
-extern Eigen::Vector3d t_base_lidar;
-
-// Working extrinsic: identity rotation, translation-only (both sensors aligned to base)
-extern Transformd T_i_l_working;
-
 bool readGlobalparam(rclcpp::Node::SharedPtr);
 
 bool readCalibration(rclcpp::Node::SharedPtr);
-
-// Publish rectified (rotation-aligned) static TF frames
-void publishRectifiedWorkingFrames(rclcpp::Node::SharedPtr node);
 

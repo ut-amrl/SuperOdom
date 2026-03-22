@@ -20,6 +20,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include <sensor_msgs/msg/imu.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <nav_msgs/msg/odometry.hpp>
 #include <super_odometry_msgs/msg/laser_feature.hpp>
 
@@ -34,7 +36,6 @@
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "super_odometry/utils/superodom_utils.h"
-#include <sensor_msgs/point_cloud2_iterator.hpp>
 
 
 namespace super_odometry {
@@ -71,11 +72,15 @@ namespace super_odometry {
         float max_range;
         int filter_point_size;
         double voxel_leaf_size;
+        double lidar_mount_roll_rad;
+        double lidar_mount_pitch_rad;
+        double lidar_mount_yaw_rad;
         SensorType lidar_sensor;
         SensorType imu_sensor;
         double imu_acc_x_limit;
         double imu_acc_y_limit;
         double imu_acc_z_limit;
+        float imu_dt;
     };
 
     struct ImuMeasurement {
@@ -110,7 +115,7 @@ namespace super_odometry {
         void vioRemovePointDistortion(double lidar_start_time, double lidar_end_time, MapRingBuffer<nav_msgs::msg::Odometry::SharedPtr>&vioBuf,
                                     pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &lidar_msg);
 
-        void undistortionAndFeatureExtraction();
+        bool undistortionAndFeatureExtraction();
 
         void extractFeatures(double lidar_start_time, const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& lidar_msg, const Eigen::Quaterniond& quaternion);
 
@@ -120,12 +125,11 @@ namespace super_odometry {
 
         void laserCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg);
 
-        void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
-
-        void livoxPcl2Handler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+        // void livoxHandler(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg);
+        void livoxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
         void uniformFeatureExtraction(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr &pc_in, 
-            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float block_range);
+            pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_out_surf, int skip_num, float min_range, float max_range);
 
         void assignTimeforPointCloud(pcl::PointCloud<PointType>::Ptr laserCloudIn_ptr_);
         
@@ -133,6 +137,8 @@ namespace super_odometry {
         sensor_msgs::msg::PointCloud2 publishCloud(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr thisPub, typename pcl::PointCloud<Point>::Ptr thisCloud, rclcpp::Time thisStamp, std::string thisFrame);
 
         bool readParameters();
+
+        void publishRectifiedSensorFrames();
 
         void publishTopic(double lidar_start_time, 
                                          pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr laser_no_distortion_points,
@@ -143,7 +149,7 @@ namespace super_odometry {
 
         void manageLidarBuffer(pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud, double timestamp);
 
-        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu::SharedPtr& msg);
+        ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu& msg);
 
         double calculateDeltaTime(double current_timestamp);
 
@@ -187,7 +193,6 @@ namespace super_odometry {
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdom;
         rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subLivoxCloud;
-        rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLivoxPcl2Cloud;
 
         // Publishers
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
@@ -198,6 +203,7 @@ namespace super_odometry {
         std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
         rclcpp::CallbackGroup::SharedPtr cb_group_;
+        std::shared_ptr<tf2_ros::StaticTransformBroadcaster> rectified_tf_broadcaster_;
 
         int delay_count_;
         std::mutex m_buf;
@@ -208,7 +214,6 @@ namespace super_odometry {
         bool LASER_CAMERA_SYNC_SUCCESS = false;
         bool IMU_INIT=false;
         double m_imuPeriod;
-        double last_vectornav_enu_time_ = -1;
 
         super_odometry_msgs::msg::LaserFeature laserFeature;
         std_msgs::msg::Header FeatureHeader;

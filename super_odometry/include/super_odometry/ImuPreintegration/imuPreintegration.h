@@ -105,8 +105,7 @@ namespace super_odometry {
 
         void resetParams();
 
-        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, 
-        sensor_msgs::msg::Imu& thisImu);
+        bool handleIMUInitialization(const sensor_msgs::msg::Imu& imu_raw, sensor_msgs::msg::Imu& thisImu);
 
 
         void updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
@@ -200,13 +199,12 @@ namespace super_odometry {
         double last_processed_lidar_time = -1;
         double lastImuT_imu = -1;
         double lastImuT_opt = -1;
-        double last_vectornav_enu_time = -1;
-        int key = 1;
-        int imuPreintegrationResetId = 0;
-
-        // TF alignment yaw correction state
+        double last_imu_input_time = -1;
         bool imu_yaw_initialized_ = false;
         Eigen::Quaterniond imu_yaw_correction_ = Eigen::Quaterniond::Identity();
+        int key = 1;
+        int imuPreintegrationResetId = 0;
+        int frame_count = 0;
 
         enum IMU_STATE : uint8_t {
         FAIL=0,    //lose imu information 

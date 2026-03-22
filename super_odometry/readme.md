@@ -1,5 +1,14 @@
 ## Super Odometry
 
+### Alphatruck UT AMRL Changes
+
+The Alphatruck branch includes a UT AMRL-specific integration layer on top of the base Super Odometry code. The main changes are:
+
+- Replaced the old mixed calibration/manual-rotation path with a TF/URDF-driven alignment flow for Alphatruck. IMU and LiDAR frames are derived from `base_link`, `imu_frame`, and `lidar_frame`, and rectified helper frames are published for the physical sensor frames.
+- Moved the odometry frame publishing to `map -> base_link` so the full robot URDF subtree moves consistently in the map frame, while keeping rectified LiDAR/IMU helper frames for debugging and sensor interpretation.
+- Improved startup/runtime robustness by waiting for required TFs instead of failing fast, buffering LiDAR scans until slightly-late IMU data arrives, and cleaning up several branch-merge regressions in IMU preintegration and frame handling.
+- Added a live Alphatruck terminal dashboard (`scripts/superodom_dashboard.py`) that shows LiDAR/IMU rates, odometry, TF readiness, optimization stats, distance traveled, CPU/RAM usage, and related runtime health in a continuously updating terminal view.
+
 Super Odometry is a high-performance odometry library designed for robotics applications. It integrates advanced algorithms for real-time localization and mapping, supporting a wide range of sensors.
 
 ## How to Run the localization mode? 

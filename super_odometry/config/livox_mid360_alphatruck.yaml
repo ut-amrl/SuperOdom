@@ -37,7 +37,7 @@
         min_range: 0.2    #<!-- remove too closed points -->
         max_range: 20.0
         filter_point_size: 3
-        voxel_leaf_size: 0.2
+        voxel_leaf_size: 0.5
 
     # Laser Mapping Params
     laser_mapping_node:

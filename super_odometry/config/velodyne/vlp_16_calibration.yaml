@@ -8,17 +8,15 @@ extrinsicRotation_imu_laser: !!opencv-matrix
   # data: [1., 0., 0.,
   #       0., 1., 0.,
   #       0., 0., 1.]
-  # T^lidar_imu convention (right hand)
-  data: [ -0.9691044,  0.2464987,  0.0086654,
-          0.2465162,  0.9691381,  0.0009969,
-          -0.0081522,  0.0031022, -0.9999620 ]
-  # T^imu_lidar convention (left hand)
-  # data: [ -0.969104,  0.246516, -0.008152,
-  #         0.246499,  0.969138,  0.003102,
-  #         0.008665,  0.000997, -0.999962 ]
-  # data: [-1., 0., 0.,
-  #       0., 1., 0.,
-  #       0., 0., -1.]
+  # T^lidar_imu convention (right hand) spot imu
+  # data: [ -0.9956921,  0.0910319,  0.0176171,
+  #         0.0913757,  0.9956195,  0.0198054,
+  #         -0.0157370,  0.0213299, -0.9996486 ]
+  # T^lidar_imu convention (right hand) vectornav imu
+  data: [ -0.2599915, -0.9654723, -0.0163586,
+          0.9655964, -0.2598576, -0.0098737,
+          0.0052819, -0.0183628,  0.9998174 ]
+
 
 #Translation from laser frame to imu frame, imu^T_laser
 extrinsicTranslation_imu_laser: !!opencv-matrix
@@ -26,7 +24,10 @@ extrinsicTranslation_imu_laser: !!opencv-matrix
   cols: 1
   dt: d
   # data: [0.0, 0.0, 0.0]
-  data: [0.359046, 0.337624, 0.048837]
+  # T^lidar_imu convention (right hand) spot imu
+  # data: [0.079110, 0.043678, 0.067031]
+  # T^lidar_imu convention (right hand) vectornav imu
+  data: [-0.018992, -0.168931, -0.072069]
   # data: [0.265121, -0.41586, 0.045387]
 
 

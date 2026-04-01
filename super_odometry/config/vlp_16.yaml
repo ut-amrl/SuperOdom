@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    imu_topic: "/imu"
+    imu_topic: "/vectornav/imu_uncompensated"
     laser_topic: "/velodyne_points"
     sensor: "velodyne"
     use_imu_roll_pitch: false
@@ -8,8 +8,8 @@
     
     world_frame: "odom"
     world_frame_rot: "odom_rot"
-    sensor_frame: "velodyne"
-    sensor_frame_rot: "velodyne_rot"
+    sensor_frame: "base_link"
+    sensor_frame_rot: "base_link_rot"
 
     imu_acc_x_limit: 2.0
     imu_acc_y_limit: 2.0

@@ -196,7 +196,7 @@ namespace super_odometry {
             RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
                                 "very small motion, not accumulating. %f", stats.translation_from_last);
         }
-    acceptResult = true;
+    // acceptResult = true;
     return acceptResult;
 }
 

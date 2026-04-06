@@ -8,13 +8,15 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import launch_ros
 
+
 def get_share_file(package_name, file_name):
     return os.path.join(get_package_share_directory(package_name), file_name)
+
 
 def generate_launch_description():
     config_path = get_share_file(
         package_name="super_odometry",
-        file_name="config/livox_mid360_alphatruck.yaml")
+        file_name="config/velodyne_spot.yaml")
     home_directory = os.path.expanduser("~")
 
     config_path_arg = DeclareLaunchArgument(
@@ -97,7 +99,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        launch_ros.actions.SetParameter(name="use_sim_time", value="false"),
+        launch_ros.actions.SetParameter(name="use_sim_time", value="true"),
         config_path_arg,
         odom_topic_arg,
         world_frame_arg,

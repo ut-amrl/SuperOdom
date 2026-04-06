@@ -1,0 +1,69 @@
+/**:
+  ros__parameters:
+    PROJECT_NAME: "super_odometry"
+    imu_topic: "/vectornav/imu_uncompensated"
+    imu_sensor: "vectornav"
+
+    laser_topic: "/velodyne_points"
+    lidar_sensor: "velodyne"
+    use_imu_roll_pitch: true
+    log_imu_roll_pitch_icp: false
+    save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
+    
+    world_frame: "map"
+    world_frame_rot: "map_rot"
+    lidar_frame_rectified: "lidar_link_rect"
+    imu_frame_rectified: "imu_link_rect"
+
+    dashboard_refresh_hz: 5.0
+    dashboard_timeout_sec: 1.5
+
+    use_tf_alignment: true
+    base_link_frame: "base_link"
+    imu_frame: "imu_link"
+    lidar_frame: "lidar_link"
+    imu_laser_rotation_offset_deg: [0.0, 0.0, 0.0]
+    yaw_ratio: 0.0
+
+    imu_acc_x_limit: 2.0
+    imu_acc_y_limit: 2.0
+    imu_acc_z_limit: 2.0
+    imu_min_dt: 0.004
+    imu_dt: 0.005
+
+    # Feature Extraction Params
+    feature_extraction_node:
+        scan_line: 16      # DONT TOUCH
+        min_range: 0.2    #<!-- remove too closed points -->
+        max_range: 20.0
+        filter_point_size: 3
+        voxel_leaf_size: 0.5
+
+    # Laser Mapping Params
+    laser_mapping_node:
+        mapping_line_resolution: 0.1
+        mapping_plane_resolution: 0.1
+        max_iterations: 5
+        max_surface_features: 4000
+        auto_voxel_size: true
+
+        # For localization mode
+        localization_mode: false
+        read_pose_file: false
+        init_x: 0.0
+        init_y: 0.0
+        init_z: 0.0
+        init_roll: 0.0
+        init_pitch: 0.0
+        init_yaw: 0.0 
+    
+    # DONT TOUCH
+    # IMU Preintegration Params
+    imu_preintegration_node:
+        lidar_correction_noise: 0.03
+        
+        acc_n: 0.01          # accelerometer measurement noise standard deviation. #0.2
+        gyr_n: 0.00001         # gyroscope measurement noise standard deviation.     #0.05
+        acc_w: 0.01          # accelerometer bias random work noise standard deviation.  #0.02
+        gyr_w: 0.00001       # gyroscope bias random work noise standard deviation.     #4.0e-5
+        g_norm: 9.80511    # 0 means you need to provide both imu-camera and laser-camera extrinsic

@@ -37,6 +37,11 @@
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "super_odometry/utils/superodom_utils.h"
 
+#include <grid_map_core/GridMap.hpp>
+#include <grid_map_ros/GridMapRosConverter.hpp>
+#include <grid_map_msgs/msg/grid_map.hpp>
+#include <deque>
+
 
 namespace super_odometry {
 
@@ -81,6 +86,18 @@ namespace super_odometry {
         double imu_acc_y_limit;
         double imu_acc_z_limit;
         float imu_dt;
+        bool elevation_map_enabled;
+        float elevation_map_resolution;
+        float elevation_map_size;
+        float elevation_map_height_cutoff;  // upper band (exclude overhead)
+        float elevation_map_height_min;     // lower band (exclude below-floor noise)
+        int elevation_map_fill_passes;      // neighbor-averaging passes to fill gaps (0 = disabled)
+        int elevation_map_buffer_size;      // number of past scans to merge (1 = no buffering)
+        bool elevation_map_equal_weight;    // true = all frames equal weight, false = linear (newest heaviest)
+        double elevation_map_publish_rate;  // Hz for between-scan republish via IMU pose; 0 = lidar rate only
+        bool elevation_map_yaw_filter;      // enable azimuth (horizontal angle) crop on input points
+        float elevation_map_yaw_min;        // radians; keep [yaw_min, yaw_max] (or outside if min > max)
+        float elevation_map_yaw_max;
     };
 
     struct ImuMeasurement {
@@ -147,6 +164,8 @@ namespace super_odometry {
                                          pcl::PointCloud<PointType>::Ptr depthPoints,
                                          Eigen::Quaterniond q_w_original_l);
 
+        void buildAndPublishElevationMap(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time);
+
         void manageLidarBuffer(pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud, double timestamp);
 
         ImuMeasurement parseImuMessage(const sensor_msgs::msg::Imu& msg);
@@ -192,6 +211,8 @@ namespace super_odometry {
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloud;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdom;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subSlamOdom_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subLioPrediction_;
         rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subLivoxCloud;
 
         // Publishers
@@ -200,6 +221,7 @@ namespace super_odometry {
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubPlannerPoints;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubBobPoints;
         rclcpp::Publisher<super_odometry_msgs::msg::LaserFeature>::SharedPtr pubLaserFeatureInfo;
+        rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pubElevationMap;
         std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
         rclcpp::CallbackGroup::SharedPtr cb_group_;
@@ -219,6 +241,21 @@ namespace super_odometry {
         std_msgs::msg::Header FeatureHeader;
         Eigen::Quaterniond q_w_original_l;
         Eigen::Vector3d t_w_original_l;
+
+        // SLAM pose from laser_mapping_node (the reliable world-frame position)
+        Eigen::Vector3d slam_pos_{Eigen::Vector3d::Zero()};
+        Eigen::Quaterniond slam_rot_{Eigen::Quaterniond::Identity()};
+        bool has_slam_pose_{false};
+        std::mutex slam_pose_mutex_;
+
+        // Per-scan elevation maps buffered for temporal averaging
+        std::deque<grid_map::GridMap> elevation_map_buffer_;
+
+        // Latest merged map, republished at high rate with updated position
+        grid_map::GridMap latest_elevation_map_;
+        std::mutex latest_map_mutex_;
+        rclcpp::TimerBase::SharedPtr elevation_map_timer_;
+
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloudwithTime=nullptr;
         pcl::PointCloud<point_os::OusterPointXYZIRT>::Ptr tmpOusterCloudIn=nullptr ;
         feature_extraction_config config_;

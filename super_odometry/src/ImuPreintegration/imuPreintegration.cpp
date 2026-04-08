@@ -453,8 +453,22 @@ namespace super_odometry {
         float r_y = odomMsg->pose.pose.orientation.y;
         float r_z = odomMsg->pose.pose.orientation.z;
         float r_w = odomMsg->pose.pose.orientation.w;
-        gtsam::Pose3 lidarPose = gtsam::Pose3(gtsam::Rot3::Quaternion(r_w, r_x, r_y, r_z),
-                                              gtsam::Point3(p_x, p_y, p_z));
+        Eigen::Quaterniond q_w_lidar(r_w, r_x, r_y, r_z);
+        q_w_lidar.normalize();
+
+        Eigen::Vector3d t_w_measurement(p_x, p_y, p_z);
+        Eigen::Vector3d t_w_lidar = t_w_measurement;
+
+        // laser_mapping currently publishes a base_link-positioned correction while
+        // keeping the orientation in the LiDAR frame convention. Reconstruct the
+        // LiDAR origin here so IMU preintegration consumes a consistent pose.
+        if (odomMsg->child_frame_id == BASE_LINK_FRAME) {
+            t_w_lidar = t_w_measurement + q_w_lidar * T_BASE_LIDAR;
+        }
+
+        gtsam::Pose3 lidarPose = gtsam::Pose3(
+            gtsam::Rot3::Quaternion(q_w_lidar.w(), q_w_lidar.x(), q_w_lidar.y(), q_w_lidar.z()),
+            gtsam::Point3(t_w_lidar.x(), t_w_lidar.y(), t_w_lidar.z()));
 
         // 0. initialize system
         if (systemInitialized == false) {

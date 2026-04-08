@@ -52,6 +52,9 @@ find_package(Ceres REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
 find_package(TBB REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(grid_map_core REQUIRED)
+find_package(grid_map_ros REQUIRED)
+find_package(grid_map_msgs REQUIRED)
 
 # Include directories
 include_directories(
@@ -112,6 +115,9 @@ ament_target_dependencies(SuperOdomLib
   visualization_msgs
   pcl_conversions
   livox_ros_driver2
+  grid_map_core
+  grid_map_ros
+  grid_map_msgs
 )
 target_link_libraries(SuperOdomLib
   ${PCL_LIBRARIES}

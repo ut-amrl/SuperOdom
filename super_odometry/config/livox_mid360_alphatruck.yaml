@@ -6,7 +6,7 @@
 
     laser_topic: "/livox/lidar"
     lidar_sensor: "livox"
-    use_imu_roll_pitch: true
+    use_imu_roll_pitch: false
     log_imu_roll_pitch_icp: false
     save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
     
@@ -38,6 +38,21 @@
         max_range: 20.0
         filter_point_size: 3
         voxel_leaf_size: 0.5
+
+    # Elevation Map Params
+    elevation_map:
+        enabled: true
+        resolution: 0.2
+        size: 10.0
+        height_cutoff: 1.0   # upper band: ignore points above this (m, world frame z)
+        height_min: -2.0     # lower band: ignore below-ground noise (m, world frame z)
+        fill_passes: 3       # neighbor-averaging passes to fill unknown cells (0 = off)
+        buffer_size: 10      # number of past scans to merge (1 = no buffering)
+        equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
+        publish_rate: 20.0   # Hz for between-scan republish via IMU pose; 0 = lidar rate only
+        yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
+        yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
+        yaw_max:  1.57
 
     # Laser Mapping Params
     laser_mapping_node:

@@ -791,7 +791,9 @@ namespace super_odometry {
             }
 
             const Eigen::Vector3d p_world = R * Eigen::Vector3d(pt.x, pt.y, pt.z) + t;
-            if (p_world.z() > height_max || p_world.z() < height_min) continue;
+            // Band is relative to sensor altitude so it tracks up ramps correctly.
+            const float dz = static_cast<float>(p_world.z() - t.z());
+            if (dz > height_max || dz < height_min) continue;
             grid_map::Position pos(p_world.x(), p_world.y());
             if (!raw_map.isInside(pos)) continue;
             grid_map::Index idx;

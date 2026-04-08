@@ -44,14 +44,14 @@
         enabled: true
         resolution: 0.1
         size: 10.0
-        height_cutoff: 1.0   # upper band: ignore points above this (m, world frame z)
-        height_min: -1.0     # lower band: ignore below-ground noise (m, world frame z)
+        height_cutoff: 1.0   # upper band: ignore points > this many metres above the sensor (gravity-aligned, tracks ramps)
+        height_min: -1.0     # lower band: ignore points > this many metres below the sensor
         fill_passes: 3       # neighbor-averaging passes to fill unknown cells (0 = off)
         buffer_size: 5       # number of past scans to merge (1 = no buffering)
         equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
         publish_rate: 0.0    # Hz for between-scan republish via IMU pose; 0 = lidar rate only
         gaussian_blur: true  # apply a 3x3 Gaussian blur after gap fill
-        gaussian_kernel_size: 3  # odd kernel size in cells; 1 disables smoothing effect
+        gaussian_kernel_size: 5  # odd kernel size in cells; 1 disables smoothing effect
         yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
         yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
         yaw_max:  1.57
@@ -78,10 +78,10 @@
     # DONT TOUCH
     # IMU Preintegration Params
     imu_preintegration_node:
-        lidar_correction_noise: 0.04
+        lidar_correction_noise: 0.02
         
-        acc_n: 0.005          # accelerometer measurement noise standard deviation. #0.2
-        gyr_n: 0.000005         # gyroscope measurement noise standard deviation.     #0.05
-        acc_w: 0.005          # accelerometer bias random work noise standard deviation.  #0.02
-        gyr_w: 0.000005       # gyroscope bias random work noise standard deviation.     #4.0e-5
+        acc_n: 0.0014          # accelerometer measurement noise standard deviation. #0.2
+        gyr_n: 0.000061         # gyroscope measurement noise standard deviation.     #0.05
+        acc_w: 0.0004          # accelerometer bias random work noise standard deviation.  #0.02
+        gyr_w: 0.000024       # gyroscope bias random work noise standard deviation.     #4.0e-5
         g_norm: 9.80511    # 0 means you need to provide both imu-camera and laser-camera extrinsic

@@ -33,6 +33,10 @@
 #include "super_odometry/config/parameter.h"
 
 #include <mutex>
+#include <thread>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "super_odometry/utils/superodom_utils.h"
@@ -40,6 +44,8 @@
 #include <grid_map_core/GridMap.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
 #include <grid_map_msgs/msg/grid_map.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
+#include <sensor_msgs/msg/image.hpp>
 #include <deque>
 
 
@@ -103,6 +109,11 @@ namespace super_odometry {
         // Ramped height ceiling (from elevation_mapping_cupy) for vehicle body removal.
         // Reject point in body frame if:  z > max(d_xy - ramp_b, 0) * ramp_a + ramp_c
         float elevation_map_min_range;  // 3D body-frame range cutoff — skips truck body returns
+        bool elevation_map_costmap_enabled;  // publish occupancy grid + grayscale image from elevation
+        float elevation_map_costmap_low;     // height below this → occupied
+        float elevation_map_costmap_high;    // height above this → occupied
+        bool  elevation_map_retention_enabled; // accumulate running-mean per cell; fill NaN from history
+        float elevation_map_retention_size;   // size of the global retention map (m), e.g. 100
     };
 
     struct ImuMeasurement {
@@ -124,6 +135,7 @@ namespace super_odometry {
         static constexpr double laserTime = 2.304e-6;
 
         featureExtraction(const rclcpp::NodeOptions & options);
+        ~featureExtraction();
 
         void initInterface();
   
@@ -169,7 +181,10 @@ namespace super_odometry {
                                          pcl::PointCloud<PointType>::Ptr depthPoints,
                                          Eigen::Quaterniond q_w_original_l);
 
-        void buildAndPublishElevationMap(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time);
+        void buildAndPublishElevationMap(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time,
+                                         const Eigen::Matrix3d& R, const Eigen::Vector3d& t);
+        void enqueueElevationMapJob(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time);
+        void elevationMapWorker();
 
         void manageLidarBuffer(pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloud, double timestamp);
 
@@ -227,6 +242,10 @@ namespace super_odometry {
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubBobPoints;
         rclcpp::Publisher<super_odometry_msgs::msg::LaserFeature>::SharedPtr pubLaserFeatureInfo;
         rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pubElevationMap;
+        rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pubElevationMapOccupancy;
+        rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pubElevationMapImage;
+        rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pubElevationMapBoolCostmap;
+        rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pubElevationMapBoolImage;
         std::vector<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr> pubEachScan;
 
         rclcpp::CallbackGroup::SharedPtr cb_group_;
@@ -260,6 +279,19 @@ namespace super_odometry {
         grid_map::GridMap latest_elevation_map_;
         std::mutex latest_map_mutex_;
         rclcpp::TimerBase::SharedPtr elevation_map_timer_;
+
+        // Separate thread so elevation map work does not block the odometry pipeline.
+        struct ElevationMapJob {
+            pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr points;
+            double lidar_start_time;
+            Eigen::Matrix3d R;
+            Eigen::Vector3d t;
+        };
+        std::queue<ElevationMapJob> elevation_map_queue_;
+        std::mutex elevation_map_queue_mutex_;
+        std::condition_variable elevation_map_cv_;
+        std::atomic<bool> elevation_map_thread_stop_{false};
+        std::thread elevation_map_thread_;
 
         pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr pointCloudwithTime=nullptr;
         pcl::PointCloud<point_os::OusterPointXYZIRT>::Ptr tmpOusterCloudIn=nullptr ;

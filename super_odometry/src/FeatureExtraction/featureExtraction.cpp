@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <pcl/filters/voxel_grid.h>
 #include <Eigen/Geometry>
+#include <opencv2/imgproc.hpp>
 #include <tf2_ros/buffer.h>
 #define RESET "\033[0m"
 #define BLACK "\033[30m"   /* Black */
@@ -218,6 +219,8 @@ namespace super_odometry {
         this->declare_parameter<int>("elevation_map.buffer_size", 5);
         this->declare_parameter<bool>("elevation_map.equal_weight", false);
         this->declare_parameter<double>("elevation_map.publish_rate", 0.0);
+        this->declare_parameter<bool>("elevation_map.gaussian_blur", false);
+        this->declare_parameter<int>("elevation_map.gaussian_kernel_size", 3);
         this->declare_parameter<bool>("elevation_map.yaw_filter", false);
         this->declare_parameter<double>("elevation_map.yaw_min", -M_PI);
         this->declare_parameter<double>("elevation_map.yaw_max",  M_PI);
@@ -286,6 +289,9 @@ namespace super_odometry {
         config_.elevation_map_buffer_size    = this->get_parameter("elevation_map.buffer_size").as_int();
         config_.elevation_map_equal_weight   = this->get_parameter("elevation_map.equal_weight").as_bool();
         config_.elevation_map_publish_rate   = this->get_parameter("elevation_map.publish_rate").as_double();
+        config_.elevation_map_gaussian_blur  = this->get_parameter("elevation_map.gaussian_blur").as_bool();
+        config_.elevation_map_gaussian_kernel_size =
+            this->get_parameter("elevation_map.gaussian_kernel_size").as_int();
         config_.elevation_map_yaw_filter     = this->get_parameter("elevation_map.yaw_filter").as_bool();
         config_.elevation_map_yaw_min        = this->get_parameter("elevation_map.yaw_min").as_double();
         config_.elevation_map_yaw_max        = this->get_parameter("elevation_map.yaw_max").as_double();
@@ -848,6 +854,62 @@ namespace super_odometry {
                     }
                 }
                 layer = buf;
+            }
+        }
+
+        if (config_.elevation_map_gaussian_blur) {
+            auto& layer = merged["elevation"];
+            const int rows = layer.rows();
+            const int cols = layer.cols();
+            int kernel_size = config_.elevation_map_gaussian_kernel_size;
+            if (kernel_size < 1) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 5000,
+                    "elevation_map.gaussian_kernel_size=%d is invalid; using 1",
+                    kernel_size);
+                kernel_size = 1;
+            }
+            if (kernel_size % 2 == 0) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 5000,
+                    "elevation_map.gaussian_kernel_size=%d must be odd; using %d",
+                    kernel_size, kernel_size + 1);
+                ++kernel_size;
+            }
+            if (kernel_size > 1) {
+                using RowMajorMatrixXf = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+                RowMajorMatrixXf values(rows, cols);
+                RowMajorMatrixXf weights = RowMajorMatrixXf::Zero(rows, cols);
+                for (int i = 0; i < rows; ++i) {
+                    for (int j = 0; j < cols; ++j) {
+                        const float val = layer(i, j);
+                        if (std::isnan(val)) {
+                            values(i, j) = 0.0f;
+                            continue;
+                        }
+                        values(i, j) = val;
+                        weights(i, j) = 1.0f;
+                    }
+                }
+
+                RowMajorMatrixXf blurred_values = RowMajorMatrixXf::Zero(rows, cols);
+                RowMajorMatrixXf blurred_weights = RowMajorMatrixXf::Zero(rows, cols);
+
+                cv::Mat values_mat(rows, cols, CV_32FC1, values.data());
+                cv::Mat weights_mat(rows, cols, CV_32FC1, weights.data());
+                cv::Mat blurred_values_mat(rows, cols, CV_32FC1, blurred_values.data());
+                cv::Mat blurred_weights_mat(rows, cols, CV_32FC1, blurred_weights.data());
+
+                cv::GaussianBlur(values_mat, blurred_values_mat, cv::Size(kernel_size, kernel_size), 0.0, 0.0, cv::BORDER_REPLICATE);
+                cv::GaussianBlur(weights_mat, blurred_weights_mat, cv::Size(kernel_size, kernel_size), 0.0, 0.0, cv::BORDER_REPLICATE);
+
+                for (int i = 0; i < rows; ++i) {
+                    for (int j = 0; j < cols; ++j) {
+                        const float weight = blurred_weights(i, j);
+                        layer(i, j) = (weight > 1e-6f) ? (blurred_values(i, j) / weight) : NAN;
+                    }
+                }
             }
         }
 

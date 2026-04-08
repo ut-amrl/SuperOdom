@@ -45,11 +45,13 @@
         resolution: 0.2
         size: 10.0
         height_cutoff: 1.0   # upper band: ignore points above this (m, world frame z)
-        height_min: -2.0     # lower band: ignore below-ground noise (m, world frame z)
+        height_min: -1.0     # lower band: ignore below-ground noise (m, world frame z)
         fill_passes: 3       # neighbor-averaging passes to fill unknown cells (0 = off)
-        buffer_size: 10      # number of past scans to merge (1 = no buffering)
+        buffer_size: 5      # number of past scans to merge (1 = no buffering)
         equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
-        publish_rate: 20.0   # Hz for between-scan republish via IMU pose; 0 = lidar rate only
+        publish_rate: 0.0   # Hz for between-scan republish via IMU pose; 0 = lidar rate only
+        gaussian_blur: true  # apply a 3x3 Gaussian blur after gap fill
+        gaussian_kernel_size: 3  # odd kernel size in cells; 1 disables smoothing effect
         yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
         yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
         yaw_max:  1.57

@@ -224,6 +224,7 @@ namespace super_odometry {
         this->declare_parameter<bool>("elevation_map.yaw_filter", false);
         this->declare_parameter<double>("elevation_map.yaw_min", -M_PI);
         this->declare_parameter<double>("elevation_map.yaw_max",  M_PI);
+        this->declare_parameter<double>("elevation_map.min_range", 2.0);
 
                 
         config_.N_SCANS = this->get_parameter("feature_extraction_node.scan_line").as_int();
@@ -295,6 +296,7 @@ namespace super_odometry {
         config_.elevation_map_yaw_filter     = this->get_parameter("elevation_map.yaw_filter").as_bool();
         config_.elevation_map_yaw_min        = this->get_parameter("elevation_map.yaw_min").as_double();
         config_.elevation_map_yaw_max        = this->get_parameter("elevation_map.yaw_max").as_double();
+        config_.elevation_map_min_range      = this->get_parameter("elevation_map.min_range").as_double();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -764,7 +766,19 @@ namespace super_odometry {
                             grid_map::Position(t.x(), t.y()));
         raw_map["elevation"].setConstant(NAN);
 
+        // Ramped height ceiling coefficients (elevation_mapping_cupy approach).
+        // Reject a point in body frame if:  z > max(d_xy - ramp_b, 0) * ramp_a + ramp_c
+        // Very close points get a very strict ceiling (cuts car roof/body).
+        // Further points get a relaxed ceiling (allows tall obstacles).
+        const float min_range_sq = config_.elevation_map_min_range * config_.elevation_map_min_range;
+
         for (const auto& pt : points->points) {
+            // Skip points closer than min_range — these are the truck body.
+            if (min_range_sq > 0.0f) {
+                const float r2 = pt.x*pt.x + pt.y*pt.y + pt.z*pt.z;
+                if (r2 < min_range_sq) continue;
+            }
+
             // Azimuth (yaw) filter in sensor frame — mirrors FastDEM's cropAngle.
             // yaw_min <= yaw_max: keep [yaw_min, yaw_max] (normal sector).
             // yaw_min >  yaw_max: keep outside (yaw_max, yaw_min) (wrap-around sector).

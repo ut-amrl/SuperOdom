@@ -8,6 +8,7 @@ from collections import deque
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from grid_map_msgs.msg import GridMap
 from nav_msgs.msg import Odometry
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -215,6 +216,7 @@ class SuperOdomDashboard(Node):
         self.state_rate = RateTracker()
         self.map_rate = RateTracker()
         self.stats_rate = RateTracker()
+        self.elev_rate = RateTracker()
         self.opt_time_stats = StatsTracker()
         self.cpu_tracker = CpuTracker()
 
@@ -234,6 +236,7 @@ class SuperOdomDashboard(Node):
         self.create_subscription(Bool, f"{self.project_name}/state_estimation_health", self.health_cb, 10)
         self.create_subscription(String, f"{self.project_name}/prediction_source", self.prediction_cb, 10)
         self.create_subscription(OptimizationStats, f"{self.project_name}/super_odometry_stats", self.stats_cb, 10)
+        self.create_subscription(GridMap, f"{self.project_name}/elevation_map", self.elev_cb, 2)
 
         self.create_timer(1.0 / self.refresh_hz, self.render)
 
@@ -283,6 +286,9 @@ class SuperOdomDashboard(Node):
         self.stats_rate.tick(time.monotonic(), msg.header.stamp)
         self.last_stats = msg
         self.opt_time_stats.update(msg.time_elapsed)
+
+    def elev_cb(self, msg):
+        self.elev_rate.tick(time.monotonic(), msg.header.stamp)
 
     def tf_ok(self, target, source):
         try:
@@ -413,6 +419,7 @@ class SuperOdomDashboard(Node):
             ))
 
         lines.append(make_border("="))
+        elev_ok = self.elev_rate.recent(now_wall, self.timeout_sec)
         lines.append(make_row(
             f"Inputs   :: IMU {format_bool(imu_ok)} @ {fmt_float(self.imu_rate.hz(), 1)} Hz, age {fmt_age(self.imu_rate.age(now_ros))}",
             f"LiDAR {format_bool(lidar_ok)} @ {fmt_float(self.lidar_rate.hz(), 1)} Hz",
@@ -420,6 +427,9 @@ class SuperOdomDashboard(Node):
         lines.append(make_row(
             f"Outputs  :: State {format_bool(state_ok)} @ {fmt_float(self.state_rate.hz(), 1)} Hz",
             f"LIO {format_bool(map_ok)} @ {fmt_float(self.map_rate.hz(), 1)} Hz",
+        ))
+        lines.append(make_row(
+            f"Elev Map :: {format_bool(elev_ok)} @ {fmt_float(self.elev_rate.hz(), 1)} Hz",
         ))
         lines.append(make_row(
             f"TF       :: map->base {format_bool(self.tf_ok(self.world_frame, self.base_link_frame))}, base->lidar {format_bool(self.tf_ok(self.base_link_frame, self.lidar_frame))}, base->imu {format_bool(self.tf_ok(self.base_link_frame, self.imu_frame))}"

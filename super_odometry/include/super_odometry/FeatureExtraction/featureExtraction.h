@@ -100,6 +100,9 @@ namespace super_odometry {
         bool elevation_map_yaw_filter;      // enable azimuth (horizontal angle) crop on input points
         float elevation_map_yaw_min;        // radians; keep [yaw_min, yaw_max] (or outside if min > max)
         float elevation_map_yaw_max;
+        // Ramped height ceiling (from elevation_mapping_cupy) for vehicle body removal.
+        // Reject point in body frame if:  z > max(d_xy - ramp_b, 0) * ramp_a + ramp_c
+        float elevation_map_min_range;  // 3D body-frame range cutoff — skips truck body returns
     };
 
     struct ImuMeasurement {

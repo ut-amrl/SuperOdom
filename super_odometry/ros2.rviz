@@ -5,7 +5,6 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /TF1
         - /TF1/Frames1
       Splitter Ratio: 0.5
     Tree Height: 393
@@ -75,13 +74,31 @@ Visualization Manager:
           Value: false
         livox_frame/base_link:
           Value: false
+        map:
+          Value: true
       Marker Scale: 3
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: false
       Tree:
-        {}
+        map:
+          base_link:
+            camera_link:
+              camera_color_frame:
+                camera_color_optical_frame:
+                  {}
+              camera_depth_frame:
+                camera_depth_optical_frame:
+                  {}
+            imu_link:
+              imu_link_rect:
+                {}
+            lidar_link:
+              lidar_link_rect:
+                {}
+              livox_frame/base_link:
+                {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -286,7 +303,7 @@ Visualization Manager:
       Color: 200; 200; 200
       Color Layer: elevation
       Color Transformer: GridMapLayer
-      Enabled: false
+      Enabled: true
       Height Layer: elevation
       Height Transformer: GridMapLayer
       History Length: 1
@@ -305,7 +322,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /super_odometry/elevation_map
       Use Rainbow: true
-      Value: false
+      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -386,7 +403,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 7.236489772796631
+      Distance: 10.166748046875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1

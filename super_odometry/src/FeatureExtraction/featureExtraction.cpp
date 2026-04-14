@@ -1002,11 +1002,26 @@ namespace super_odometry {
                 retention.setGeometry(
                     grid_map::Length(rsize, rsize),
                     merged.getResolution(),
-                    grid_map::Position(0.0, 0.0));
+                    grid_map::Position(t.x(), t.y()));
                 retention.setFrameId(merged.getFrameId());
-                retention["elevation"].setConstant(0.0f);
+                retention["elevation"].setConstant(NAN);
                 retention["count"].setConstant(0.0f);
                 last_res = merged.getResolution();
+            }
+
+            // Slide the retention window to follow the robot.
+            // grid_map::move() shifts the map center, preserving cells that
+            // remain within the new window and clearing newly exposed cells.
+            const grid_map::Position new_center(t.x(), t.y());
+            std::vector<grid_map::BufferRegion> cleared_regions;
+            retention.move(new_center, cleared_regions);
+            // Reset newly exposed cells to no-data.
+            for (const auto& region : cleared_regions) {
+                for (grid_map::SubmapIterator it(retention, region.getStartIndex(), region.getSize());
+                     !it.isPastEnd(); ++it) {
+                    retention.at("elevation", *it) = NAN;
+                    retention.at("count", *it) = 0.0f;
+                }
             }
 
             Eigen::MatrixXf& re = retention["elevation"];

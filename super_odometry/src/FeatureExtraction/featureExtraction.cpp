@@ -906,7 +906,83 @@ namespace super_odometry {
                 merged.at("elevation", *it) = weighted_sum / weight_sum;
         }
 
+        // --- Retention (runs BEFORE gap fill and blur) ---
+        //
+        // Order matters:
+        //   1. Retention first  — restores retained cells into merged so gap fill
+        //      can use them as seeds to propagate into surrounding gaps.
+        //   2. Gap fill second  — now has both current-frame hits AND retained
+        //      values available, so it can fill gaps inside the retained area.
+        //   3. Gaussian blur last — smooths the fully-populated map for output.
+        //
+        // Retention mean is updated only from raw temporal-merge values (pre
+        // post-processing) so gap-filled / blurred interpolations never poison
+        // the stored history and retained edges stay sharp.
+        const Eigen::MatrixXf merged_pre_postproc = merged["elevation"];
+
+        if (config_.elevation_map_retention_enabled) {
+            static grid_map::GridMap retention({"elevation", "count"});
+            static float last_res = -1.0f;
+
+            if (last_res != merged.getResolution()) {
+                const float rsize = config_.elevation_map_retention_size;
+                retention.setGeometry(
+                    grid_map::Length(rsize, rsize),
+                    merged.getResolution(),
+                    grid_map::Position(t.x(), t.y()));
+                retention.setFrameId(merged.getFrameId());
+                retention["elevation"].setConstant(NAN);
+                retention["count"].setConstant(0.0f);
+                last_res = merged.getResolution();
+            }
+
+            const grid_map::Position new_center(t.x(), t.y());
+            std::vector<grid_map::BufferRegion> cleared_regions;
+            retention.move(new_center, cleared_regions);
+            for (const auto& region : cleared_regions) {
+                for (grid_map::SubmapIterator it(retention, region.getStartIndex(), region.getSize());
+                     !it.isPastEnd(); ++it) {
+                    retention.at("elevation", *it) = NAN;
+                    retention.at("count", *it) = 0.0f;
+                }
+            }
+
+            Eigen::MatrixXf& re = retention["elevation"];
+            Eigen::MatrixXf& rc = retention["count"];
+            Eigen::MatrixXf& mo = merged["elevation"];
+
+            for (grid_map::GridMapIterator it(merged); !it.isPastEnd(); ++it) {
+                const grid_map::Index midx(*it);
+                float& me_val = mo(midx(0), midx(1));
+
+                grid_map::Position pos;
+                merged.getPosition(midx, pos);
+                grid_map::Index ridx;
+                if (!retention.getIndex(pos, ridx)) continue;
+
+                const float old_count = std::isnan(rc(ridx(0), ridx(1))) ? 0.0f : rc(ridx(0), ridx(1));
+                const float old_mean  = std::isnan(re(ridx(0), ridx(1))) ? 0.0f : re(ridx(0), ridx(1));
+
+                // Use the raw temporal-merge value (pre gap-fill / blur) to decide
+                // whether there was a real LiDAR observation this frame.
+                const float raw_val = merged_pre_postproc(midx(0), midx(1));
+                if (!std::isnan(raw_val)) {
+                    // Real hit — update running mean with the unblurred observation.
+                    const float new_count = old_count + 1.0f;
+                    re(ridx(0), ridx(1)) = (old_count * old_mean + raw_val) / new_count;
+                    rc(ridx(0), ridx(1)) = new_count;
+                } else if (old_count > 0.0f) {
+                    // No hit this frame — restore retained value into merged so gap
+                    // fill (below) can use it as a seed to propagate into neighbours.
+                    me_val = old_mean;
+                }
+            }
+        }
+
         // --- Gap filling: propagate known values into unknown cells ---
+        // Runs after retention so retained values are available as seeds.
+        // Gaps inside the retained area can now be filled by propagating from
+        // neighbouring retained cells rather than only from current-frame hits.
         if (config_.elevation_map_fill_passes > 0) {
             auto& layer = merged["elevation"];
             const int rows = layer.rows();
@@ -933,6 +1009,7 @@ namespace super_odometry {
             }
         }
 
+        // --- Gaussian blur: smooth the fully-populated map for output ---
         if (config_.elevation_map_gaussian_blur) {
             auto& layer = merged["elevation"];
             const int rows = layer.rows();
@@ -985,70 +1062,6 @@ namespace super_odometry {
                         const float weight = blurred_weights(i, j);
                         layer(i, j) = (weight > 1e-6f) ? (blurred_values(i, j) / weight) : NAN;
                     }
-                }
-            }
-        }
-
-        // Retention: global fixed map accumulates a running per-cell mean forever.
-        // The map never slides — cells stay retained as long as the robot is within the map bounds.
-        // NaN cells in merged are filled from history; if a new valid reading arrives it updates the mean.
-        if (config_.elevation_map_retention_enabled) {
-            static grid_map::GridMap retention({"elevation", "count"});
-            static float last_res = -1.0f;
-
-            // Reinitialise on first call or if resolution changed.
-            if (last_res != merged.getResolution()) {
-                const float rsize = config_.elevation_map_retention_size;
-                retention.setGeometry(
-                    grid_map::Length(rsize, rsize),
-                    merged.getResolution(),
-                    grid_map::Position(t.x(), t.y()));
-                retention.setFrameId(merged.getFrameId());
-                retention["elevation"].setConstant(NAN);
-                retention["count"].setConstant(0.0f);
-                last_res = merged.getResolution();
-            }
-
-            // Slide the retention window to follow the robot.
-            // grid_map::move() shifts the map center, preserving cells that
-            // remain within the new window and clearing newly exposed cells.
-            const grid_map::Position new_center(t.x(), t.y());
-            std::vector<grid_map::BufferRegion> cleared_regions;
-            retention.move(new_center, cleared_regions);
-            // Reset newly exposed cells to no-data.
-            for (const auto& region : cleared_regions) {
-                for (grid_map::SubmapIterator it(retention, region.getStartIndex(), region.getSize());
-                     !it.isPastEnd(); ++it) {
-                    retention.at("elevation", *it) = NAN;
-                    retention.at("count", *it) = 0.0f;
-                }
-            }
-
-            Eigen::MatrixXf& re = retention["elevation"];
-            Eigen::MatrixXf& rc = retention["count"];
-            Eigen::MatrixXf& mo = merged["elevation"];
-
-            // Single loop over merged cells — O(N), no nesting.
-            for (grid_map::GridMapIterator it(merged); !it.isPastEnd(); ++it) {
-                const grid_map::Index midx(*it);
-                float& me_val = mo(midx(0), midx(1));
-
-                grid_map::Position pos;
-                merged.getPosition(midx, pos);
-                grid_map::Index ridx;
-                if (!retention.getIndex(pos, ridx)) continue;
-
-                const float old_count = std::isnan(rc(ridx(0), ridx(1))) ? 0.0f : rc(ridx(0), ridx(1));
-                const float old_mean  = std::isnan(re(ridx(0), ridx(1))) ? 0.0f : re(ridx(0), ridx(1));
-
-                if (!std::isnan(me_val)) {
-                    // New valid reading — update running mean and leave merged as-is.
-                    const float new_count = old_count + 1.0f;
-                    re(ridx(0), ridx(1)) = (old_count * old_mean + me_val) / new_count;
-                    rc(ridx(0), ridx(1)) = new_count;
-                } else if (old_count > 0.0f) {
-                    // No reading this scan — fill merged from history.
-                    me_val = old_mean;
                 }
             }
         }

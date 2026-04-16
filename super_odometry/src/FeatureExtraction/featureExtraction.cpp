@@ -154,11 +154,20 @@ namespace super_odometry {
         subSlamOdom_ = this->create_subscription<nav_msgs::msg::Odometry>(
             ProjectName + "/laser_odometry", 10, slam_odom_cb);
 
-        // lio_prediction is published at IMU rate and gives high-rate pose updates.
-        // Sharing the same callback keeps slam_pos_ fresh between lidar scans so the
-        // high-rate timer can slide the map center accurately.
-        subLioPrediction_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            ProjectName + "/lio_prediction", 10, slam_odom_cb);
+        // LIO subscription: only created when use_lio_crop is enabled.
+        // Updates lio_pos_ for map crop center and height band reference.
+        if (config_.elevation_map_use_lio_crop) {
+            auto lio_odom_cb = [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(slam_pose_mutex_);
+                lio_pos_ = Eigen::Vector3d(
+                    msg->pose.pose.position.x,
+                    msg->pose.pose.position.y,
+                    msg->pose.pose.position.z);
+                has_lio_pose_ = true;
+            };
+            subLioPrediction_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                ProjectName + "/state_estimation2", 10, lio_odom_cb);
+        }
 
         // High-rate republish: move the map center to the latest pose and republish.
         // Data stays the same; only the window position changes until the next scan.
@@ -173,7 +182,13 @@ namespace super_odometry {
                     Eigen::Vector3d pos;
                     {
                         std::lock_guard<std::mutex> pose_lock(slam_pose_mutex_);
-                        pos = slam_pos_;
+                        if (config_.elevation_map_use_lio_crop) {
+                            if (!has_lio_pose_) return;
+                            pos = lio_pos_;
+                        } else {
+                            if (!has_slam_pose_) return;
+                            pos = slam_pos_;
+                        }
                     }
                     latest_elevation_map_.move(grid_map::Position(pos.x(), pos.y()));
 
@@ -248,6 +263,7 @@ namespace super_odometry {
         this->declare_parameter<double>("elevation_map.costmap_high_threshold",  0.5);
         this->declare_parameter<bool>("elevation_map.enable_retention", false);
         this->declare_parameter<double>("elevation_map.retention_map_size", 100.0);
+        this->declare_parameter<bool>("elevation_map.use_lio_crop", false);
 
 
         config_.N_SCANS = this->get_parameter("feature_extraction_node.scan_line").as_int();
@@ -325,6 +341,7 @@ namespace super_odometry {
         config_.elevation_map_costmap_high     = this->get_parameter("elevation_map.costmap_high_threshold").as_double();
         config_.elevation_map_retention_enabled = this->get_parameter("elevation_map.enable_retention").as_bool();
         config_.elevation_map_retention_size    = this->get_parameter("elevation_map.retention_map_size").as_double();
+        config_.elevation_map_use_lio_crop      = this->get_parameter("elevation_map.use_lio_crop").as_bool();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -778,6 +795,9 @@ namespace super_odometry {
                 job.R = q_w_original_l.toRotationMatrix();
                 job.t = t_w_original_l;
             }
+            // In LIO crop mode: use LIO position for map crop center, height band, and window.
+            // In LO mode: t_lio == t so all crop logic uses LO (original behaviour).
+            job.t_lio = (config_.elevation_map_use_lio_crop && has_lio_pose_) ? lio_pos_ : job.t;
         }
 
         {
@@ -804,13 +824,13 @@ namespace super_odometry {
                 job = std::move(elevation_map_queue_.front());
                 elevation_map_queue_.pop();
             }
-            buildAndPublishElevationMap(job.points, job.lidar_start_time, job.R, job.t);
+            buildAndPublishElevationMap(job.points, job.lidar_start_time, job.R, job.t, job.t_lio);
         }
     }
 
     void featureExtraction::buildAndPublishElevationMap(
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time,
-        const Eigen::Matrix3d& R, const Eigen::Vector3d& t)
+        const Eigen::Matrix3d& R, const Eigen::Vector3d& t, const Eigen::Vector3d& t_lio)
     {
         if (!config_.elevation_map_enabled) return;
 
@@ -820,10 +840,12 @@ namespace super_odometry {
         const float height_min = config_.elevation_map_height_min;
 
         // --- Build this scan's raw elevation map ---
+        // Crop is centered on LIO position so the map window is always current.
+        // Points are projected using LO pose (R, t) for stable world-frame coordinates.
         grid_map::GridMap raw_map({"elevation"});
         raw_map.setFrameId(WORLD_FRAME);
         raw_map.setGeometry(grid_map::Length(size, size), resolution,
-                            grid_map::Position(t.x(), t.y()));
+                            grid_map::Position(t_lio.x(), t_lio.y()));
         raw_map["elevation"].setConstant(NAN);
 
         // Ramped height ceiling coefficients (elevation_mapping_cupy approach).
@@ -851,8 +873,8 @@ namespace super_odometry {
             }
 
             const Eigen::Vector3d p_world = R * Eigen::Vector3d(pt.x, pt.y, pt.z) + t;
-            // Band is relative to sensor altitude so it tracks up ramps correctly.
-            const float dz = static_cast<float>(p_world.z() - t.z());
+            // Height band relative to LIO sensor altitude — tracks ramps using current pose.
+            const float dz = static_cast<float>(p_world.z() - t_lio.z());
             if (dz > height_max || dz < height_min) continue;
             grid_map::Position pos(p_world.x(), p_world.y());
             if (!raw_map.isInside(pos)) continue;
@@ -876,7 +898,7 @@ namespace super_odometry {
         grid_map::GridMap merged({"elevation"});
         merged.setFrameId(WORLD_FRAME);
         merged.setGeometry(grid_map::Length(size, size), resolution,
-                           grid_map::Position(t.x(), t.y()));
+                           grid_map::Position(t_lio.x(), t_lio.y()));
         merged["elevation"].setConstant(NAN);
 
         const int N = static_cast<int>(elevation_map_buffer_.size());
@@ -929,14 +951,14 @@ namespace super_odometry {
                 retention.setGeometry(
                     grid_map::Length(rsize, rsize),
                     merged.getResolution(),
-                    grid_map::Position(t.x(), t.y()));
+                    grid_map::Position(t_lio.x(), t_lio.y()));
                 retention.setFrameId(merged.getFrameId());
                 retention["elevation"].setConstant(NAN);
                 retention["count"].setConstant(0.0f);
                 last_res = merged.getResolution();
             }
 
-            const grid_map::Position new_center(t.x(), t.y());
+            const grid_map::Position new_center(t_lio.x(), t_lio.y());
             std::vector<grid_map::BufferRegion> cleared_regions;
             retention.move(new_center, cleared_regions);
             for (const auto& region : cleared_regions) {
@@ -1066,6 +1088,22 @@ namespace super_odometry {
             }
         }
 
+        // Snap the map centre to the current LIO position before publishing.
+        // The worker thread processes the scan asynchronously — by the time it
+        // finishes (10-50ms), the 50Hz timer has already published several maps
+        // with a more advanced lio_pos_. Publishing with a stale t_lio centre
+        // causes costmap_gen's accumulation shift to jump backward then forward.
+        // Moving to current lio_pos_ here keeps the published centre monotonically
+        // advancing and consistent with the timer publishes.
+        if (config_.elevation_map_use_lio_crop) {
+            Eigen::Vector3d cur_lio;
+            {
+                std::lock_guard<std::mutex> lk(slam_pose_mutex_);
+                cur_lio = has_lio_pose_ ? lio_pos_ : t_lio;
+            }
+            merged.move(grid_map::Position(cur_lio.x(), cur_lio.y()));
+        }
+
         // Store for the high-rate timer which slides the center between scans.
         {
             std::lock_guard<std::mutex> lock(latest_map_mutex_);
@@ -1073,7 +1111,9 @@ namespace super_odometry {
         }
 
         auto msg = grid_map::GridMapRosConverter::toMessage(merged);
-        msg->header.stamp = rclcpp::Time(static_cast<int64_t>(lidar_start_time * 1e9));
+        // Use this->now() so the TF lookup in costmap_gen is at the same wall time
+        // as the timer publishes — consistent yaw, no stamp-driven heading jumps.
+        msg->header.stamp = this->now();
         pubElevationMap->publish(*msg);
 
         if (config_.elevation_map_costmap_enabled) {

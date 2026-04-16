@@ -114,6 +114,7 @@ namespace super_odometry {
         float elevation_map_costmap_high;    // height above this → occupied
         bool  elevation_map_retention_enabled; // accumulate running-mean per cell; fill NaN from history
         float elevation_map_retention_size;   // size of the global retention map (m), e.g. 100
+        bool  elevation_map_use_lio_crop;     // true: crop window centered on LIO pose; false: LO (original)
     };
 
     struct ImuMeasurement {
@@ -182,7 +183,7 @@ namespace super_odometry {
                                          Eigen::Quaterniond q_w_original_l);
 
         void buildAndPublishElevationMap(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time,
-                                         const Eigen::Matrix3d& R, const Eigen::Vector3d& t);
+                                         const Eigen::Matrix3d& R, const Eigen::Vector3d& t, const Eigen::Vector3d& t_lio);
         void enqueueElevationMapJob(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time);
         void elevationMapWorker();
 
@@ -266,11 +267,15 @@ namespace super_odometry {
         Eigen::Quaterniond q_w_original_l;
         Eigen::Vector3d t_w_original_l;
 
-        // SLAM pose from laser_mapping_node (the reliable world-frame position)
+        // LO pose from laser_odometry (10Hz) — used for point projection (R, t).
         Eigen::Vector3d slam_pos_{Eigen::Vector3d::Zero()};
         Eigen::Quaterniond slam_rot_{Eigen::Quaterniond::Identity()};
         bool has_slam_pose_{false};
         std::mutex slam_pose_mutex_;
+
+        // LIO pose from state_estimation2 (200Hz) — used for map crop center and height band.
+        Eigen::Vector3d lio_pos_{Eigen::Vector3d::Zero()};
+        bool has_lio_pose_{false};
 
         // Per-scan elevation maps buffered for temporal averaging
         std::deque<grid_map::GridMap> elevation_map_buffer_;
@@ -285,7 +290,8 @@ namespace super_odometry {
             pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr points;
             double lidar_start_time;
             Eigen::Matrix3d R;
-            Eigen::Vector3d t;
+            Eigen::Vector3d t;      // LO pose — used for point projection into world frame
+            Eigen::Vector3d t_lio;  // LIO pose — used for map crop center and height band
         };
         std::queue<ElevationMapJob> elevation_map_queue_;
         std::mutex elevation_map_queue_mutex_;

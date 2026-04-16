@@ -6,7 +6,7 @@
 
     laser_topic: "/livox/lidar"
     lidar_sensor: "livox"
-    use_imu_roll_pitch: false
+    use_imu_roll_pitch: true
     log_imu_roll_pitch_icp: false
     save_ply: false   # This can affect real-time performance; make sure you have enough memory for saving point cloud
     
@@ -46,11 +46,11 @@
         size: 10.0
         height_cutoff: 1.0   # upper band: ignore points > this many metres above the sensor (gravity-aligned, tracks ramps)
         height_min: -5.0     # lower band: ignore points > this many metres below the sensor
-        fill_passes: 3       # neighbor-averaging passes to fill unknown cells (0 = off)
+        fill_passes: 5       # neighbor-averaging passes to fill unknown cells (0 = off)
         buffer_size: 4       # number of past scans to merge (1 = no buffering)
         equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
-        publish_rate: 0.0    # Hz for between-scan republish via IMU pose; 0 = lidar rate only
-        gaussian_blur: true  # apply a 3x3 Gaussian blur after gap fill
+        publish_rate: 50.0   # Hz for between-scan republish; window slides at LIO rate (200Hz), data updates at lidar rate (10Hz)
+        gaussian_blur: false  # apply a 3x3 Gaussian blur after gap fill
         gaussian_kernel_size: 3  # odd kernel size in cells; 1 disables smoothing effect
         yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
         yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
@@ -61,6 +61,7 @@
         enable_costmap: false         # publish occupancy grid + grayscale image derived from elevation
         costmap_low_threshold: -0.1   # height below this (m) → occupied
         costmap_high_threshold: 0.1   # height above this (m) → occupied
+        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation2, 200Hz); false: LO (original)
 
     # Laser Mapping Params
     laser_mapping_node:
@@ -83,7 +84,7 @@
     # DONT TOUCH
     # IMU Preintegration Params
     imu_preintegration_node:
-        lidar_correction_noise: 0.03
+        lidar_correction_noise: 0.04
         
         acc_n: 0.0014          # accelerometer measurement noise standard deviation. #0.2
         gyr_n: 0.000061         # gyroscope measurement noise standard deviation.     #0.05

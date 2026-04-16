@@ -507,7 +507,7 @@ return PredictionSource::CONSTANT_VELOCITY;
 
         nav_msgs::msg::Odometry odomAftMapped;
         odomAftMapped.header.frame_id = WORLD_FRAME;
-        odomAftMapped.child_frame_id = BASE_LINK_FRAME;
+        odomAftMapped.child_frame_id = LIDAR_FRAME_RECTIFIED;
         odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
 
         odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
@@ -515,11 +515,9 @@ return PredictionSource::CONSTANT_VELOCITY;
         odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
         odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
 
-        const Eigen::Vector3d t_w_base = t_w_curr - q_w_curr * T_BASE_LIDAR;
-
-        odomAftMapped.pose.pose.position.x = t_w_base.x();
-        odomAftMapped.pose.pose.position.y = t_w_base.y();
-        odomAftMapped.pose.pose.position.z = t_w_base.z();
+        odomAftMapped.pose.pose.position.x = t_w_curr.x();
+        odomAftMapped.pose.pose.position.y = t_w_curr.y();
+        odomAftMapped.pose.pose.position.z = t_w_curr.z();
 
         odomAftMapped.twist.twist.linear.x = vel_b.x();
         odomAftMapped.twist.twist.linear.y = vel_b.y();
@@ -535,10 +533,10 @@ return PredictionSource::CONSTANT_VELOCITY;
         {
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  BASE_LINK_FRAME;
-            laserOdomIncremental.pose.pose.position.x = t_w_base.x();
-            laserOdomIncremental.pose.pose.position.y = t_w_base.y();
-            laserOdomIncremental.pose.pose.position.z = t_w_base.z();
+            laserOdomIncremental.child_frame_id =  LIDAR_FRAME_RECTIFIED;
+            laserOdomIncremental.pose.pose.position.x = t_w_curr.x();
+            laserOdomIncremental.pose.pose.position.y = t_w_curr.y();
+            laserOdomIncremental.pose.pose.position.z = t_w_curr.z();
             laserOdomIncremental.pose.pose.orientation.x = q_w_curr.x();
             laserOdomIncremental.pose.pose.orientation.y = q_w_curr.y();
             laserOdomIncremental.pose.pose.orientation.z = q_w_curr.z();
@@ -552,11 +550,10 @@ return PredictionSource::CONSTANT_VELOCITY;
 
             laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
-            laserOdomIncremental.child_frame_id =  BASE_LINK_FRAME;
-            const Eigen::Vector3d t_w_base_incremental = laser_incremental_T.pos - laser_incremental_T.rot * T_BASE_LIDAR;
-            laserOdomIncremental.pose.pose.position.x = t_w_base_incremental.x();
-            laserOdomIncremental.pose.pose.position.y = t_w_base_incremental.y();
-            laserOdomIncremental.pose.pose.position.z = t_w_base_incremental.z();
+            laserOdomIncremental.child_frame_id =  LIDAR_FRAME_RECTIFIED;
+            laserOdomIncremental.pose.pose.position.x = laser_incremental_T.pos.x();
+            laserOdomIncremental.pose.pose.position.y = laser_incremental_T.pos.y();
+            laserOdomIncremental.pose.pose.position.z = laser_incremental_T.pos.z();
             laserOdomIncremental.pose.pose.orientation.x = laser_incremental_T.rot.x();
             laserOdomIncremental.pose.pose.orientation.y = laser_incremental_T.rot.y();
             laserOdomIncremental.pose.pose.orientation.z = laser_incremental_T.rot.z();

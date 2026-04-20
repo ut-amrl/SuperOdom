@@ -103,6 +103,8 @@ namespace super_odometry {
         double elevation_map_publish_rate;  // Hz for between-scan republish via IMU pose; 0 = lidar rate only
         bool elevation_map_gaussian_blur;   // apply a 3x3 Gaussian smoothing pass after gap fill
         int elevation_map_gaussian_kernel_size;  // odd Gaussian kernel size in cells
+        bool elevation_map_median_filter;   // apply a median filter pass (NaN-aware) before gaussian — kills spikes
+        int elevation_map_median_kernel_size;    // odd median kernel size in cells
         bool elevation_map_yaw_filter;      // enable azimuth (horizontal angle) crop on input points
         float elevation_map_yaw_min;        // radians; keep [yaw_min, yaw_max] (or outside if min > max)
         float elevation_map_yaw_max;

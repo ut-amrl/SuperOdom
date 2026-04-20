@@ -254,6 +254,8 @@ namespace super_odometry {
         this->declare_parameter<double>("elevation_map.publish_rate", 0.0);
         this->declare_parameter<bool>("elevation_map.gaussian_blur", false);
         this->declare_parameter<int>("elevation_map.gaussian_kernel_size", 3);
+        this->declare_parameter<bool>("elevation_map.median_filter", false);
+        this->declare_parameter<int>("elevation_map.median_kernel_size", 3);
         this->declare_parameter<bool>("elevation_map.yaw_filter", false);
         this->declare_parameter<double>("elevation_map.yaw_min", -M_PI);
         this->declare_parameter<double>("elevation_map.yaw_max",  M_PI);
@@ -332,6 +334,9 @@ namespace super_odometry {
         config_.elevation_map_gaussian_blur  = this->get_parameter("elevation_map.gaussian_blur").as_bool();
         config_.elevation_map_gaussian_kernel_size =
             this->get_parameter("elevation_map.gaussian_kernel_size").as_int();
+        config_.elevation_map_median_filter  = this->get_parameter("elevation_map.median_filter").as_bool();
+        config_.elevation_map_median_kernel_size =
+            this->get_parameter("elevation_map.median_kernel_size").as_int();
         config_.elevation_map_yaw_filter     = this->get_parameter("elevation_map.yaw_filter").as_bool();
         config_.elevation_map_yaw_min        = this->get_parameter("elevation_map.yaw_min").as_double();
         config_.elevation_map_yaw_max        = this->get_parameter("elevation_map.yaw_max").as_double();
@@ -1028,6 +1033,57 @@ namespace super_odometry {
                     }
                 }
                 layer = buf;
+            }
+        }
+
+        // --- Median filter: reject single-cell spikes, preserve edges ---
+        if (config_.elevation_map_median_filter) {
+            auto& layer = merged["elevation"];
+            const int rows = layer.rows();
+            const int cols = layer.cols();
+            int kernel_size = config_.elevation_map_median_kernel_size;
+            if (kernel_size < 1) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 5000,
+                    "elevation_map.median_kernel_size=%d is invalid; using 1",
+                    kernel_size);
+                kernel_size = 1;
+            }
+            if (kernel_size % 2 == 0) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 5000,
+                    "elevation_map.median_kernel_size=%d must be odd; using %d",
+                    kernel_size, kernel_size + 1);
+                ++kernel_size;
+            }
+            if (kernel_size > 1) {
+                const int half = kernel_size / 2;
+                Eigen::MatrixXf out = layer;
+                std::vector<float> window;
+                window.reserve(kernel_size * kernel_size);
+                for (int i = 0; i < rows; ++i) {
+                    for (int j = 0; j < cols; ++j) {
+                        window.clear();
+                        for (int di = -half; di <= half; ++di) {
+                            const int ni = i + di;
+                            if (ni < 0 || ni >= rows) continue;
+                            for (int dj = -half; dj <= half; ++dj) {
+                                const int nj = j + dj;
+                                if (nj < 0 || nj >= cols) continue;
+                                const float v = layer(ni, nj);
+                                if (!std::isnan(v)) window.push_back(v);
+                            }
+                        }
+                        if (window.empty()) {
+                            out(i, j) = NAN;
+                        } else {
+                            const size_t mid = window.size() / 2;
+                            std::nth_element(window.begin(), window.begin() + mid, window.end());
+                            out(i, j) = window[mid];
+                        }
+                    }
+                }
+                layer = out;
             }
         }
 

@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     PROJECT_NAME: "super_odometry"
-    imu_topic: "/vectornav/imu_uncompensated"
+    imu_topic: "/vectornav/imu"
     imu_sensor: "vectornav"
 
     laser_topic: "/velodyne_points"
@@ -19,15 +19,15 @@
     dashboard_timeout_sec: 1.5
 
     use_tf_alignment: true
-    base_link_frame: "base_link"
-    imu_frame: "imu_link"
-    lidar_frame: "lidar_link"
+    base_link_frame: "base_link_2"
+    imu_frame: "imu_link_2"
+    lidar_frame: "lidar_link_2"
     imu_laser_rotation_offset_deg: [0.0, 0.0, 0.0]
     yaw_ratio: 0.0
 
-    imu_acc_x_limit: 2.0
-    imu_acc_y_limit: 2.0
-    imu_acc_z_limit: 2.0
+    imu_acc_x_limit: 20.0
+    imu_acc_y_limit: 20.0
+    imu_acc_z_limit: 10.0
     imu_min_dt: 0.004
     imu_dt: 0.005
 
@@ -35,16 +35,42 @@
     feature_extraction_node:
         scan_line: 16      # DONT TOUCH
         min_range: 0.2    #<!-- remove too closed points -->
-        max_range: 20.0
+        max_range: 5.0
         filter_point_size: 3
         voxel_leaf_size: 0.5
+
+    # Elevation Map Params
+    elevation_map:
+        enabled: false
+        resolution: 0.1
+        size: 10.0
+        height_cutoff: 1.0   # upper band: ignore points > this many metres above the sensor (gravity-aligned, tracks ramps)
+        height_min: -5.0     # lower band: ignore points > this many metres below the sensor
+        fill_passes: 5       # neighbor-averaging passes to fill unknown cells (0 = off)
+        buffer_size: 15       # number of past scans to merge (1 = no buffering)
+        equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
+        publish_rate: 50.0   # Hz for between-scan republish; window slides at LIO rate (200Hz), data updates at lidar rate (10Hz)
+        gaussian_blur: false  # apply a 3x3 Gaussian blur after gap fill
+        gaussian_kernel_size: 3  # odd kernel size in cells; 1 disables smoothing effect
+        median_filter: true  # NaN-aware median pass before gaussian; rejects single-cell spikes, preserves edges
+        median_kernel_size: 5    # odd kernel size in cells; 1 disables
+        yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
+        yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
+        yaw_max:  1.57
+        min_range: 2.0      # 3D body-frame min range (m); skips truck body — tune to truck size
+        enable_retention: true        # accumulate running per-cell mean; fill NaN cells from history
+        retention_map_size: 40.0     # size of the global retention map in metres (covers the full track)
+        enable_costmap: false         # publish occupancy grid + grayscale image derived from elevation
+        costmap_low_threshold: -0.1   # height below this (m) → occupied
+        costmap_high_threshold: 0.1   # height above this (m) → occupied
+        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation2, 200Hz); false: LO (original)
 
     # Laser Mapping Params
     laser_mapping_node:
         mapping_line_resolution: 0.1
-        mapping_plane_resolution: 0.1
+        mapping_plane_resolution: 0.2
         max_iterations: 5
-        max_surface_features: 4000
+        max_surface_features: 2000
         auto_voxel_size: true
 
         # For localization mode
@@ -61,9 +87,9 @@
     # IMU Preintegration Params
     imu_preintegration_node:
         lidar_correction_noise: 0.03
-        
-        acc_n: 0.01          # accelerometer measurement noise standard deviation. #0.2
-        gyr_n: 0.00001         # gyroscope measurement noise standard deviation.     #0.05
-        acc_w: 0.01          # accelerometer bias random work noise standard deviation.  #0.02
-        gyr_w: 0.00001       # gyroscope bias random work noise standard deviation.     #4.0e-5
+
+        acc_n: 0.0014          # accelerometer measurement noise standard deviation. #0.2
+        gyr_n: 0.000061         # gyroscope measurement noise standard deviation.     #0.05
+        acc_w: 0.0004          # accelerometer bias random work noise standard deviation.  #0.02
+        gyr_w: 0.000024       # gyroscope bias random work noise standard deviation.     #4.0e-5
         g_norm: 9.80511    # 0 means you need to provide both imu-camera and laser-camera extrinsic

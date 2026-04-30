@@ -229,7 +229,7 @@ class SuperOdomDashboard(Node):
 
         self.create_subscription(Imu, self.imu_topic, self.imu_cb, 50)
         self.create_subscription(PointCloud2, self.laser_topic, self.lidar_cb, 10)
-        self.create_subscription(Odometry, f"{self.project_name}/state_estimation2", self.state_cb, 10)
+        self.create_subscription(Odometry, f"{self.project_name}/state_estimation", self.state_cb, 10)
         self.create_subscription(Odometry, f"{self.project_name}/laser_odometry", self.map_cb, 10)
         self.create_subscription(PoseStamped, f"{self.project_name}/pose", self.pose_cb, 10)
         self.create_subscription(TwistStamped, f"{self.project_name}/twist", self.twist_cb, 10)
@@ -349,8 +349,8 @@ class SuperOdomDashboard(Node):
         ]
 
         if state_pose is None:
-            lines.append(make_row("Position      {map} [xyz] :: waiting for state_estimation2"))
-            lines.append(make_row("Orientation   {map} [rpy] :: waiting for state_estimation2"))
+            lines.append(make_row("Position      {map} [xyz] :: waiting for state_estimation"))
+            lines.append(make_row("Orientation   {map} [rpy] :: waiting for state_estimation"))
         else:
             lines.append(make_row(
                 f"Position      {{map}} [xyz] :: {state_pose[0]: .3f} {state_pose[1]: .3f} {state_pose[2]: .3f}"

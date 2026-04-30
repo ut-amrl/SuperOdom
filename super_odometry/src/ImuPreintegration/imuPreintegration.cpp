@@ -52,7 +52,7 @@ namespace super_odometry {
                         std::placeholders::_1), sub_options);
 
         pubImuOdometry = this->create_publisher<nav_msgs::msg::Odometry>(
-            ProjectName+"/state_estimation2", 10);
+            ProjectName+"/state_estimation", 10);
         pubStatePose = this->create_publisher<geometry_msgs::msg::PoseStamped>(
             ProjectName+"/pose", 10);
         pubStateTwist = this->create_publisher<geometry_msgs::msg::TwistStamped>(

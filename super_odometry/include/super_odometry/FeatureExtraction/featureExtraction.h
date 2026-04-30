@@ -275,7 +275,7 @@ namespace super_odometry {
         bool has_slam_pose_{false};
         std::mutex slam_pose_mutex_;
 
-        // LIO pose from state_estimation2 (200Hz) — used for map crop center and height band.
+        // LIO pose from state_estimation (200Hz) — used for map crop center and height band.
         Eigen::Vector3d lio_pos_{Eigen::Vector3d::Zero()};
         bool has_lio_pose_{false};
 

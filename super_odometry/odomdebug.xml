@@ -9,7 +9,7 @@
        <range bottom="-5.000000" top="5.000000" left="0.000000" right="4.995484"/>
        <limitY min="-5" max="5"/>
        <curve color="#1f77b4" name="/super_odometry/state_estimation/twist/twist/linear/x"/>
-       <curve color="#d62728" name="/super_odometry/state_estimation2/twist/twist/linear/x"/>
+       <curve color="#d62728" name="/super_odometry/state_estimation/twist/twist/linear/x"/>
       </plot>
      </DockArea>
      <DockSplitter sizes="0.5;0.5" count="2" orientation="|">
@@ -18,7 +18,7 @@
         <range bottom="-8.000000" top="8.000000" left="0.000000" right="4.995484"/>
         <limitY min="-8" max="8"/>
         <curve color="#1ac938" name="/super_odometry/state_estimation/pose/pose/position/x"/>
-        <curve color="#ff7f0e" name="/super_odometry/state_estimation2/pose/pose/position/x"/>
+        <curve color="#ff7f0e" name="/super_odometry/state_estimation/pose/pose/position/x"/>
        </plot>
       </DockArea>
       <DockArea name="...">
@@ -26,7 +26,7 @@
         <range bottom="-0.331979" top="0.164507" left="0.000000" right="4.995484"/>
         <limitY/>
         <curve color="#f14cc1" name="/super_odometry/state_estimation/pose/pose/position/y"/>
-        <curve color="#9467bd" name="/super_odometry/state_estimation2/pose/pose/position/y"/>
+        <curve color="#9467bd" name="/super_odometry/state_estimation/pose/pose/position/y"/>
        </plot>
       </DockArea>
      </DockSplitter>
@@ -58,7 +58,7 @@
    <max_array_size value="100"/>
    <boolean_strings_to_number value="true"/>
    <remove_suffix_from_strings value="true"/>
-   <selected_topics value="/super_odometry/state_estimation2;/super_odometry/state_estimation"/>
+   <selected_topics value="/super_odometry/state_estimation;/super_odometry/state_estimation"/>
   </plugin>
   <plugin ID="UDP Server"/>
   <plugin ID="WebSocket Server"/>

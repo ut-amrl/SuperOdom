@@ -42,28 +42,28 @@
     # Elevation Map Params
     elevation_map:
         enabled: true
-        resolution: 0.1
+        resolution: 0.05
         size: 10.0
         height_cutoff: 1.0   # upper band: ignore points > this many metres above the sensor (gravity-aligned, tracks ramps)
         height_min: -5.0     # lower band: ignore points > this many metres below the sensor
-        fill_passes: 5       # neighbor-averaging passes to fill unknown cells (0 = off)
-        buffer_size: 15       # number of past scans to merge (1 = no buffering)
+        fill_passes: 3       # neighbor-averaging passes to fill unknown cells (0 = off)
+        buffer_size: 10       # number of past scans to merge (1 = no buffering)
         equal_weight: false  # true = all frames equal, false = linear (newest heaviest)
-        publish_rate: 50.0   # Hz for between-scan republish; window slides at LIO rate (200Hz), data updates at lidar rate (10Hz)
+        publish_rate: 30.0   # Hz for between-scan republish; window slides at LIO rate (200Hz), data updates at lidar rate (10Hz)
         gaussian_blur: false  # apply a 3x3 Gaussian blur after gap fill
         gaussian_kernel_size: 3  # odd kernel size in cells; 1 disables smoothing effect
         median_filter: true  # NaN-aware median pass before gaussian; rejects single-cell spikes, preserves edges
-        median_kernel_size: 5    # odd kernel size in cells; 1 disables
+        median_kernel_size: 3    # odd kernel size in cells; 1 disables
         yaw_filter: true     # crop input points by horizontal angle (azimuth) in sensor frame
         yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
         yaw_max:  1.57
-        min_range: 2.0      # 3D body-frame min range (m); skips truck body — tune to truck size
+        min_range: 1.0      # 3D body-frame min range (m); skips truck body — tune to truck size
         enable_retention: true        # accumulate running per-cell mean; fill NaN cells from history
         retention_map_size: 40.0     # size of the global retention map in metres (covers the full track)
         enable_costmap: false         # publish occupancy grid + grayscale image derived from elevation
         costmap_low_threshold: -0.1   # height below this (m) → occupied
         costmap_high_threshold: 0.1   # height above this (m) → occupied
-        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation2, 200Hz); false: LO (original)
+        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation, 200Hz); false: LO (original)
 
     # Laser Mapping Params
     laser_mapping_node:

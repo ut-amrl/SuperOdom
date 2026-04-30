@@ -166,7 +166,7 @@ namespace super_odometry {
                 has_lio_pose_ = true;
             };
             subLioPrediction_ = this->create_subscription<nav_msgs::msg::Odometry>(
-                ProjectName + "/state_estimation2", 10, lio_odom_cb);
+                ProjectName + "/state_estimation", 10, lio_odom_cb);
         }
 
         // High-rate republish: move the map center to the latest pose and republish.

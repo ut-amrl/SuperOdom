@@ -10,7 +10,7 @@
         <plot flip_x="false" flip_y="false" line_width="1.0" mode="TimeSeries">
          <range left="10.127478" top="4.000000" right="18.693804" bottom="-4.000000"/>
          <limitY min="-4" max="4"/>
-         <curve name="/super_odometry/state_estimation2/pose/pose/position/x" color="#1f77b4"/>
+         <curve name="/super_odometry/state_estimation/pose/pose/position/x" color="#1f77b4"/>
          <curve name="/vrpn_mocap/titan_alphatruck/pose/pose/position/x" color="#d62728"/>
         </plot>
        </DockArea>
@@ -28,7 +28,7 @@
         <plot flip_x="false" flip_y="false" line_width="1.0" mode="TimeSeries">
          <range left="10.127478" top="4.000000" right="18.693804" bottom="-4.000000"/>
          <limitY min="-4" max="4"/>
-         <curve name="/super_odometry/state_estimation2/pose/pose/position/y" color="#1ac938"/>
+         <curve name="/super_odometry/state_estimation/pose/pose/position/y" color="#1ac938"/>
          <curve name="/vrpn_mocap/titan_alphatruck/pose/pose/position/y" color="#ff7f0e"/>
         </plot>
        </DockArea>
@@ -70,7 +70,7 @@
    <max_array_size value="100"/>
    <boolean_strings_to_number value="true"/>
    <remove_suffix_from_strings value="true"/>
-   <selected_topics value="/super_odometry/state_estimation2;/super_odometry/twist_wf;/vrpn_mocap/titan_alphatruck/pose;/vrpn_mocap/titan_alphatruck/twist"/>
+   <selected_topics value="/super_odometry/state_estimation;/super_odometry/twist_wf;/vrpn_mocap/titan_alphatruck/pose;/vrpn_mocap/titan_alphatruck/twist"/>
   </plugin>
   <plugin ID="UDP Server"/>
   <plugin ID="WebSocket Server"/>

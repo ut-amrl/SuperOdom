@@ -63,7 +63,7 @@
         enable_costmap: false         # publish occupancy grid + grayscale image derived from elevation
         costmap_low_threshold: -0.1   # height below this (m) → occupied
         costmap_high_threshold: 0.1   # height above this (m) → occupied
-        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation2, 200Hz); false: LO (original)
+        use_lio_crop: true            # true: crop/window centered on LIO (state_estimation, 200Hz); false: LO (original)
 
     # Laser Mapping Params
     laser_mapping_node:

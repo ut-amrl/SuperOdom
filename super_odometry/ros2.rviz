@@ -7,7 +7,7 @@ Panels:
         - /Global Options1
         - /TF1/Frames1
       Splitter Ratio: 0.5
-    Tree Height: 190
+    Tree Height: 405
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -25,7 +25,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: lidar_pointcloud
 Visualization Manager:
   Class: ""
   Displays:
@@ -53,18 +53,24 @@ Visualization Manager:
       Frames:
         All Enabled: false
         base_link:
+          Value: true
+        camera_color_frame:
+          Value: false
+        camera_color_optical_frame:
+          Value: false
+        camera_depth_frame:
+          Value: false
+        camera_depth_optical_frame:
           Value: false
         camera_link:
           Value: false
+        gps_link:
+          Value: false
         ground_link:
-          Value: true
+          Value: false
         imu_link:
           Value: false
-        imu_link_rect:
-          Value: false
         lidar_link:
-          Value: false
-        lidar_link_rect:
           Value: false
         livox_frame/base_link:
           Value: false
@@ -74,7 +80,23 @@ Visualization Manager:
       Show Axes: true
       Show Names: false
       Tree:
-        {}
+        base_link:
+          camera_link:
+            camera_color_frame:
+              camera_color_optical_frame:
+                {}
+            camera_depth_frame:
+              camera_depth_optical_frame:
+                {}
+          gps_link:
+            {}
+          ground_link:
+            {}
+          imu_link:
+            {}
+          lidar_link:
+            livox_frame/base_link:
+              {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -260,7 +282,7 @@ Visualization Manager:
         Value: /camera/camera/color/image_raw
       Value: true
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: false
       Max Value: 1
       Median window: 5
       Min Value: 0
@@ -271,8 +293,8 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /vrpn_mocap/omega/whisker_map
-      Value: true
+        Value: /whisker_map/local
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Class: grid_map_rviz_plugin/GridMap
@@ -296,7 +318,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /super_odometry/elevation_map
+        Value: /costmap_gen/elevation_rectified
       Use Rainbow: true
       Value: true
     - Alpha: 1
@@ -317,7 +339,7 @@ Visualization Manager:
       Max Intensity: 153
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: PointCloud2
+      Name: lidar_pointcloud
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
@@ -333,24 +355,31 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
-    - Class: rviz_default_plugins/Image
+    - Alpha: 0.699999988079071
+      Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: false
       Enabled: true
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Name: Pre-Thresh Elev cost map
-      Normalize Range: true
+      Name: elev_costmap
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /costmap_gen/rviz
+      Update Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /costmap_gen/image_accumulated_body
+        Value: /costmap_gen/rviz_updates
+      Use Timestamp: false
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: map
+    Fixed Frame: base_link
     Frame Rate: 30
   Name: root
   Tools:
@@ -393,25 +422,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 10.166748046875
+      Distance: 22.967294692993164
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 1.0586442947387695
-        Y: 0.23364433646202087
-        Z: 1.7016448974609375
+        X: 1.4162274599075317
+        Y: 0.25348225235939026
+        Z: 0.9528803825378418
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.929796040058136
+      Pitch: 0.02479548752307892
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.3351972103118896
+      Yaw: 0.4402065873146057
     Saved: ~
 Window Geometry:
   Displays:
@@ -423,9 +452,7 @@ Window Geometry:
   Hide Right Dock: true
   MPPI Plan:
     collapsed: false
-  Pre-Thresh Elev cost map:
-    collapsed: false
-  QMainWindow State: 000000ff00000000fd00000004000000000000023900000358fc020000000cfb0000001200530065006c0065006300740069006f006e000000003b0000006f0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003b000000f9000000c700fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb00000012004d00500050004900200050006c0061006e010000013a000000c80000002800fffffffb0000001800460072006f006e0074002000430061006d0065007200610100000208000000be0000002800fffffffb0000000a0049006d006100670065030000059f000001e400000199000001a4fb00000030005000720065002d00540068007200650073006800200045006c0065007600200063006f007300740020006d0061007001000002cc000000c70000002800ffffff000000010000014d0000031bfc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000005b0000031b000000a000fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000078000000051fc0100000002fb0000000800540069006d00650100000000000007800000025300fffffffb0000000800540069006d00650100000000000004500000000000000000000005410000035800000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000004000000000000023900000358fc020000000dfb0000001200530065006c0065006300740069006f006e000000003b0000006f0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003b000001d0000000c700fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb00000012004d00500050004900200050006c0061006e00000002560000013d0000002800fffffffb0000001800460072006f006e0074002000430061006d0065007200610100000211000001820000002800fffffffb0000000a0049006d006100670065020000059f000001e400000199000001a4fb00000030005000720065002d00540068007200650073006800200045006c0065007600200063006f007300740020006d006100700000000203000000c70000000000000000fb0000000a0049006d006100670065010000028f000001040000000000000000000000010000014d0000031bfc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000005b0000031b000000a000fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000078000000051fc0100000002fb0000000800540069006d00650100000000000007800000025300fffffffb0000000800540069006d00650100000000000004500000000000000000000005410000035800000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:

@@ -96,6 +96,7 @@ namespace super_odometry {
         //set extrinsic matrix for laser and imu
         if (PROVIDE_IMU_LASER_EXTRINSIC) {
             lidar2Imu = gtsam::Pose3(gtsam::Rot3(imu_laser_R), gtsam::Point3(imu_laser_T));
+            imu2Lidar = lidar2Imu.inverse();
         } else {
             imu2cam = gtsam::Pose3(gtsam::Rot3(imu_camera_R), gtsam::Point3(imu_camera_T));
             cam2Lidar = gtsam::Pose3(gtsam::Rot3(cam_laser_R), gtsam::Point3(cam_laser_T));
@@ -623,7 +624,7 @@ namespace super_odometry {
     }
 
     // 3. Process timing and queue management
-    processTiming(thisImu);
+    const double dt = processTiming(thisImu);
 
     // 4. Early return if first optimization not done
     if (!doneFirstOpt) {
@@ -631,22 +632,13 @@ namespace super_odometry {
     }
 
 
-    // --- FIX START: Integrate the CURRENT measurement ---
-    double dt = config_.imu_dt; 
-    // Ideally use the dt calculated in processTiming, but since that function 
-    // returns void, you may need to recalculate or modify processTiming to return it.
-    const double processed_imu_time = secs(&thisImu);
-    if (lastImuT_imu > 0) dt = processed_imu_time - lastImuT_imu;
-    if (dt < 0.001 || dt > 0.5) dt = config_.imu_dt;
-
+    // Integrate the current measurement using the interval captured before
+    // processTiming advances lastImuT_imu.
     imuIntegratorImu_->integrateMeasurement(
         gtsam::Vector3(thisImu.linear_acceleration.x, thisImu.linear_acceleration.y, thisImu.linear_acceleration.z),
         gtsam::Vector3(thisImu.angular_velocity.x,    thisImu.angular_velocity.y,    thisImu.angular_velocity.z), 
         dt
     );
-    // --- FIX END ---
-
-
     // 5. Prepare and publish odometry
     gtsam::NavState currentState =imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom);
     nav_msgs::msg::Odometry odometry;
@@ -709,7 +701,7 @@ void imuPreintegration::correctLivoxGravity(sensor_msgs::msg::Imu& thisImu) {
 }
 
 
-void imuPreintegration::processTiming(const sensor_msgs::msg::Imu& thisImu) {
+double imuPreintegration::processTiming(const sensor_msgs::msg::Imu& thisImu) {
     double imuTime = secs(&thisImu);
     double dt = (lastImuT_imu < 0) ? config_.imu_dt : (imuTime - lastImuT_imu);
     lastImuT_imu = imuTime;
@@ -720,6 +712,7 @@ void imuPreintegration::processTiming(const sensor_msgs::msg::Imu& thisImu) {
 
     imuQueOpt.push_back(thisImu);
     imuQueImu.push_back(thisImu);
+    return dt;
 }
 
 

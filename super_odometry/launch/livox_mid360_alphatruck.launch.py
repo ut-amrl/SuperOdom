@@ -49,6 +49,11 @@ def generate_launch_description():
         default_value="true",
         description="Launch the live terminal dashboard",
     )
+    use_sim_time_arg = DeclareLaunchArgument(
+        "use_sim_time",
+        default_value="false",
+        description="Use the /clock topic (set true for rosbag playback)",
+    )
 
     feature_extraction_node = Node(
         package="super_odometry",
@@ -99,7 +104,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        launch_ros.actions.SetParameter(name="use_sim_time", value="true"),
         config_path_arg,
         odom_topic_arg,
         world_frame_arg,
@@ -107,6 +111,9 @@ def generate_launch_description():
         lidar_frame_rectified_arg,
         imu_frame_rectified_arg,
         dashboard_arg,
+        use_sim_time_arg,
+        launch_ros.actions.SetParameter(
+            name="use_sim_time", value=LaunchConfiguration("use_sim_time")),
         feature_extraction_node,
         laser_mapping_node,
         imu_preintegration_node,

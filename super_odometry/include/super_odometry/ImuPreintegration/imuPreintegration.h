@@ -118,7 +118,7 @@ namespace super_odometry {
 
         void publishTransformsAndPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
 
-        void processTiming(const sensor_msgs::msg::Imu& thisImu);
+        double processTiming(const sensor_msgs::msg::Imu& thisImu);
 
         void initializeImu(const sensor_msgs::msg::Imu& imu_raw);
 

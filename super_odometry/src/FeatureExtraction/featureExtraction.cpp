@@ -5,7 +5,9 @@
 #include <super_odometry/FeatureExtraction/featureExtraction.h>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <opencv2/core.hpp>
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <pcl/filters/voxel_grid.h>
 #include <Eigen/Geometry>
 #include <opencv2/imgproc.hpp>
@@ -27,6 +29,25 @@
 #include "super_odometry/utils/imu_frame_utils.h"
 
 namespace super_odometry {
+
+    namespace {
+
+        grid_map::Position worldAlignedGridCenter(
+            double x, double y, double resolution)
+        {
+            if (resolution <= 0.0) {
+                return grid_map::Position(x, y);
+            }
+
+            // Every rolling map uses the same global lattice. Its centre moves
+            // only in whole-cell increments, so an (x, y) cell represents the
+            // same physical ground patch in every buffered scan.
+            return grid_map::Position(
+                std::round(x / resolution) * resolution,
+                std::round(y / resolution) * resolution);
+        }
+
+    }  // namespace
     
     featureExtraction::featureExtraction(const rclcpp::NodeOptions & options)
     : Node("feature_extraction_node", options) {
@@ -36,6 +57,7 @@ namespace super_odometry {
     featureExtraction::~featureExtraction() {
         elevation_map_thread_stop_ = true;
         elevation_map_cv_.notify_all();
+        slam_pose_cv_.notify_all();
         if (elevation_map_thread_.joinable())
             elevation_map_thread_.join();
     }
@@ -139,61 +161,180 @@ namespace super_odometry {
         // has no position (Imu struct carries only orientation), so it stays near zero.
         // The laser_mapping_node publishes the corrected pose on laser_odometry.
         auto slam_odom_cb = [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
-            std::lock_guard<std::mutex> lock(slam_pose_mutex_);
-            slam_pos_ = Eigen::Vector3d(
+            const double stamp =
+                static_cast<double>(msg->header.stamp.sec) +
+                static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+            const Eigen::Vector3d pos(
                 msg->pose.pose.position.x,
                 msg->pose.pose.position.y,
                 msg->pose.pose.position.z);
-            slam_rot_ = Eigen::Quaterniond(
+            Eigen::Quaterniond rot(
                 msg->pose.pose.orientation.w,
                 msg->pose.pose.orientation.x,
                 msg->pose.pose.orientation.y,
                 msg->pose.pose.orientation.z);
-            has_slam_pose_ = true;
+            if (rot.norm() <= 1e-12) return;
+            rot.normalize();
+
+            {
+                std::lock_guard<std::mutex> lock(slam_pose_mutex_);
+                slam_pos_ = pos;
+                slam_rot_ = rot;
+                slam_stamp_ = msg->header.stamp;
+                has_slam_pose_ = true;
+
+                TimedSlamPose pose{stamp, pos, rot};
+                if (slam_pose_buffer_.empty() || stamp > slam_pose_buffer_.back().stamp) {
+                    slam_pose_buffer_.push_back(pose);
+                } else {
+                    const auto insert_at = std::lower_bound(
+                        slam_pose_buffer_.begin(), slam_pose_buffer_.end(), stamp,
+                        [](const TimedSlamPose& candidate, double time) {
+                            return candidate.stamp < time;
+                        });
+                    if (insert_at != slam_pose_buffer_.end() &&
+                        std::abs(insert_at->stamp - stamp) < 1e-9) {
+                        *insert_at = pose;
+                    } else {
+                        slam_pose_buffer_.insert(insert_at, pose);
+                    }
+                }
+
+                constexpr double history_sec = 5.0;
+                while (!slam_pose_buffer_.empty() &&
+                       stamp - slam_pose_buffer_.front().stamp > history_sec) {
+                    slam_pose_buffer_.pop_front();
+                }
+            }
+            slam_pose_cv_.notify_all();
         };
         subSlamOdom_ = this->create_subscription<nav_msgs::msg::Odometry>(
             ProjectName + "/laser_odometry", 10, slam_odom_cb);
 
-        // LIO subscription: only created when use_lio_crop is enabled.
-        // Updates lio_pos_ for map crop center and height band reference.
+        // LIO subscription: only created when use_lio_crop is enabled. Keep a
+        // short timestamped pose history so each LiDAR scan/local grid is associated
+        // with the pose at its deskew reference time rather than the most recent
+        // (or previous-scan) laser-mapping correction.
         if (config_.elevation_map_use_lio_crop) {
             auto lio_odom_cb = [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(slam_pose_mutex_);
-                lio_pos_ = Eigen::Vector3d(
+                const double stamp =
+                    static_cast<double>(msg->header.stamp.sec) +
+                    static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+                const Eigen::Vector3d base_pos(
                     msg->pose.pose.position.x,
                     msg->pose.pose.position.y,
                     msg->pose.pose.position.z);
+                Eigen::Quaterniond base_rot(
+                    msg->pose.pose.orientation.w,
+                    msg->pose.pose.orientation.x,
+                    msg->pose.pose.orientation.y,
+                    msg->pose.pose.orientation.z);
+                if (base_rot.norm() <= 1e-12) return;
+                base_rot.normalize();
+
+                // state_estimation publishes the base_link pose, while the
+                // rectified cloud is still centred at the physical LiDAR origin.
+                const Eigen::Vector3d lidar_pos = base_pos + base_rot * T_BASE_LIDAR;
+                lio_pos_ = lidar_pos;
+                lio_stamp_ = msg->header.stamp;
                 has_lio_pose_ = true;
+
+                TimedLioPose pose{stamp, lidar_pos, base_rot};
+                if (lio_pose_buffer_.empty() || stamp > lio_pose_buffer_.back().stamp) {
+                    lio_pose_buffer_.push_back(pose);
+                } else {
+                    const auto insert_at = std::lower_bound(
+                        lio_pose_buffer_.begin(), lio_pose_buffer_.end(), stamp,
+                        [](const TimedLioPose& candidate, double time) {
+                            return candidate.stamp < time;
+                        });
+                    if (insert_at != lio_pose_buffer_.end() &&
+                        std::abs(insert_at->stamp - stamp) < 1e-9) {
+                        *insert_at = pose;
+                    } else {
+                        lio_pose_buffer_.insert(insert_at, pose);
+                    }
+                }
+
+                constexpr double history_sec = 5.0;
+                while (!lio_pose_buffer_.empty() &&
+                       stamp - lio_pose_buffer_.front().stamp > history_sec) {
+                    lio_pose_buffer_.pop_front();
+                }
             };
             subLioPrediction_ = this->create_subscription<nav_msgs::msg::Odometry>(
                 ProjectName + "/state_estimation", 10, lio_odom_cb);
         }
 
-        // High-rate republish: move the map center to the latest pose and republish.
-        // Data stays the same; only the window position changes until the next scan.
+        // High-rate republish of the finalized world snapshot. During a pitch
+        // pause, its local window follows the vehicle and is backfilled only
+        // from the last trusted bounded world registry.
         if (config_.elevation_map_publish_rate > 0.0) {
             const auto period_ms = static_cast<int>(1000.0 / config_.elevation_map_publish_rate);
             elevation_map_timer_ = this->create_wall_timer(
                 std::chrono::milliseconds(period_ms),
                 [this]() {
+                    bool has_current_pose = false;
+                    grid_map::Position current_center;
+                    builtin_interfaces::msg::Time current_pose_stamp{};
+                    if (elevationUpdatePaused()) {
+                        std::lock_guard<std::mutex> pose_lock(slam_pose_mutex_);
+                        if (config_.elevation_map_use_lio_crop && has_lio_pose_) {
+                            current_center = worldAlignedGridCenter(
+                                lio_pos_.x(), lio_pos_.y(),
+                                config_.elevation_map_resolution);
+                            current_pose_stamp = lio_stamp_;
+                            has_current_pose = true;
+                        } else if (has_slam_pose_) {
+                            current_center = worldAlignedGridCenter(
+                                slam_pos_.x(), slam_pos_.y(),
+                                config_.elevation_map_resolution);
+                            current_pose_stamp = slam_stamp_;
+                            has_current_pose = true;
+                        }
+                    }
+
                     std::lock_guard<std::mutex> map_lock(latest_map_mutex_);
                     if (latest_elevation_map_.getSize().prod() == 0) return;
 
-                    Eigen::Vector3d pos;
-                    {
-                        std::lock_guard<std::mutex> pose_lock(slam_pose_mutex_);
-                        if (config_.elevation_map_use_lio_crop) {
-                            if (!has_lio_pose_) return;
-                            pos = lio_pos_;
-                        } else {
-                            if (!has_slam_pose_) return;
-                            pos = slam_pos_;
+                    if (has_current_pose) {
+                        // Registration is frozen, but the published local window
+                        // still follows the vehicle. Moving preserves existing
+                        // world cells and marks newly exposed cells unknown.
+                        latest_elevation_map_.move(current_center);
+
+                        // Backfill only from the last trusted world registry.
+                        // No LiDAR scan or elevation computation occurs here.
+                        if (latest_registered_elevation_map_.getSize().prod() != 0) {
+                            for (grid_map::GridMapIterator it(latest_elevation_map_);
+                                 !it.isPastEnd(); ++it) {
+                                float& height =
+                                    latest_elevation_map_.at("elevation", *it);
+                                if (std::isfinite(height)) continue;
+
+                                grid_map::Position world_position;
+                                latest_elevation_map_.getPosition(*it, world_position);
+                                grid_map::Index retained_index;
+                                if (!latest_registered_elevation_map_.getIndex(
+                                        world_position, retained_index)) {
+                                    continue;
+                                }
+                                const float retained_height =
+                                    latest_registered_elevation_map_.at(
+                                        "elevation", retained_index);
+                                if (std::isfinite(retained_height)) {
+                                    height = retained_height;
+                                }
+                            }
                         }
+                        latest_elevation_stamp_ = current_pose_stamp;
                     }
-                    latest_elevation_map_.move(grid_map::Position(pos.x(), pos.y()));
 
                     auto msg = grid_map::GridMapRosConverter::toMessage(latest_elevation_map_);
-                    msg->header.stamp = this->now();
+                    // While paused, the stamp follows the pose used to shift the
+                    // window. Otherwise this remains the finalized scan stamp.
+                    msg->header.stamp = latest_elevation_stamp_;
                     pubElevationMap->publish(*msg);
                 });
         }
@@ -263,9 +404,13 @@ namespace super_odometry {
         this->declare_parameter<bool>("elevation_map.enable_costmap", false);
         this->declare_parameter<double>("elevation_map.costmap_low_threshold", -0.5);
         this->declare_parameter<double>("elevation_map.costmap_high_threshold",  0.5);
-        this->declare_parameter<bool>("elevation_map.enable_retention", false);
-        this->declare_parameter<double>("elevation_map.retention_map_size", 100.0);
+        this->declare_parameter<bool>("elevation_map.global_registration", false);
+        this->declare_parameter<double>("elevation_map.retention_map_size", 40.0);
         this->declare_parameter<bool>("elevation_map.use_lio_crop", false);
+        this->declare_parameter<bool>("elevation_map.pitch_rate_pause_enabled", false);
+        this->declare_parameter<double>("elevation_map.pause_pitch_rate_threshold", 0.15);
+        this->declare_parameter<double>("elevation_map.resume_pitch_rate_threshold", 0.07);
+        this->declare_parameter<double>("elevation_map.settling_time_seconds", 0.25);
 
 
         config_.N_SCANS = this->get_parameter("feature_extraction_node.scan_line").as_int();
@@ -344,9 +489,22 @@ namespace super_odometry {
         config_.elevation_map_costmap_enabled  = this->get_parameter("elevation_map.enable_costmap").as_bool();
         config_.elevation_map_costmap_low      = this->get_parameter("elevation_map.costmap_low_threshold").as_double();
         config_.elevation_map_costmap_high     = this->get_parameter("elevation_map.costmap_high_threshold").as_double();
-        config_.elevation_map_retention_enabled = this->get_parameter("elevation_map.enable_retention").as_bool();
-        config_.elevation_map_retention_size    = this->get_parameter("elevation_map.retention_map_size").as_double();
+        config_.elevation_map_global_registration =
+            this->get_parameter("elevation_map.global_registration").as_bool();
+        config_.elevation_map_retention_size = static_cast<float>(std::max(
+            static_cast<double>(config_.elevation_map_size),
+            this->get_parameter("elevation_map.retention_map_size").as_double()));
         config_.elevation_map_use_lio_crop      = this->get_parameter("elevation_map.use_lio_crop").as_bool();
+        config_.elevation_map_pitch_rate_pause_enabled =
+            this->get_parameter("elevation_map.pitch_rate_pause_enabled").as_bool();
+        config_.elevation_map_pause_pitch_rate_threshold = static_cast<float>(std::max(
+            0.0, this->get_parameter("elevation_map.pause_pitch_rate_threshold").as_double()));
+        config_.elevation_map_resume_pitch_rate_threshold = static_cast<float>(std::clamp(
+            this->get_parameter("elevation_map.resume_pitch_rate_threshold").as_double(),
+            0.0,
+            static_cast<double>(config_.elevation_map_pause_pitch_rate_threshold)));
+        config_.elevation_map_settling_time_seconds = std::max(
+            0.0, this->get_parameter("elevation_map.settling_time_seconds").as_double());
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -530,12 +688,17 @@ namespace super_odometry {
     // Step 4: Calculate initial transform
     Transformd T_w_original(start_pose.rot, start_pose.pos);
     bool is_imu_data = std::is_same_v<BufferType, Imu::Ptr>;
-    Transformd T_w_original_sensor = is_imu_data ? 
-                                    T_w_original * T_i_l : 
-                                    T_w_original;
+    // IMU samples have already been rotated into base_link axes. The cloud is
+    // published later with base-aligned axes but retains the LiDAR origin.
+    Transformd T_w_original_sensor = is_imu_data
+        ? Transformd(start_pose.rot, start_pose.pos + start_pose.rot * T_BASE_LIDAR)
+        : T_w_original;
 
     q_w_original_l = T_w_original_sensor.rot;
     t_w_original_l = T_w_original_sensor.pos;
+
+    const Transformd T_base_lidar(Q_LIDAR_TO_BASE, T_BASE_LIDAR);
+    const Transformd T_lidar_base = T_base_lidar.inverse();
 
     // Step 5: Process each point
     for (auto &point : lidar_msg->points) {
@@ -549,9 +712,13 @@ namespace super_odometry {
         // Transform point
         Transformd T_w_current(point_pose.rot, point_pose.pos);
         Transformd T_original_current = T_w_original.inverse() * T_w_current;
-        Transformd T_final = is_imu_data ? 
-                            T_l_i * T_original_current * T_i_l : 
-                            T_original_current;
+        Transformd T_final = T_original_current;
+        if (is_imu_data) {
+            // Points are still in the physical (pitched) LiDAR frame here. Map
+            // the relative base motion through the complete URDF extrinsic so
+            // yaw/roll during a scan cannot leak into Z through the mount pitch.
+            T_final = T_lidar_base * T_original_current * T_base_lidar;
+        }
 
         Eigen::Vector3d pt(point.x, point.y, point.z);
         pt = T_final * pt;
@@ -786,31 +953,94 @@ namespace super_odometry {
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time)
     {
         if (!config_.elevation_map_enabled) return;
+        if (elevationUpdatePaused()) {
+            // This check intentionally happens before any pose lookup or worker
+            // enqueue. Odometry continues, while this LiDAR scan contributes
+            // nothing to elevation buffering or permanent world registration.
+            elevation_scans_skipped_for_pitch_.store(true);
+            return;
+        }
 
-        // Snapshot the current pose here on the lidar callback thread, then hand off.
+        // Obtain the full LIO pose at the scan's deskew reference timestamp.
+        // Missing poses fall back to LO, but a current scan must never silently
+        // use a previous-scan attitude when timestamped LIO is available.
         ElevationMapJob job;
         job.points = points;
         job.lidar_start_time = lidar_start_time;
+        job.resuming_after_pitch_pause =
+            elevation_scans_skipped_for_pitch_.exchange(false);
         {
             std::lock_guard<std::mutex> lock(slam_pose_mutex_);
-            if (has_slam_pose_) {
-                job.R = slam_rot_.toRotationMatrix();
-                job.t = slam_pos_;
-            } else {
-                job.R = q_w_original_l.toRotationMatrix();
-                job.t = t_w_original_l;
+            bool used_lio_pose = false;
+            if (config_.elevation_map_use_lio_crop && !lio_pose_buffer_.empty()) {
+                auto after = std::lower_bound(
+                    lio_pose_buffer_.begin(), lio_pose_buffer_.end(), lidar_start_time,
+                    [](const TimedLioPose& pose, double time) {
+                        return pose.stamp < time;
+                    });
+
+                TimedLioPose matched = lio_pose_buffer_.back();
+                double pose_time_error = std::numeric_limits<double>::infinity();
+                if (after == lio_pose_buffer_.begin()) {
+                    matched = *after;
+                    pose_time_error = std::abs(matched.stamp - lidar_start_time);
+                } else if (after == lio_pose_buffer_.end()) {
+                    matched = lio_pose_buffer_.back();
+                    pose_time_error = std::abs(matched.stamp - lidar_start_time);
+                } else {
+                    const TimedLioPose& before = *std::prev(after);
+                    const double dt = after->stamp - before.stamp;
+                    const double ratio = dt > 1e-9
+                        ? std::clamp((lidar_start_time - before.stamp) / dt, 0.0, 1.0)
+                        : 0.0;
+                    matched.stamp = lidar_start_time;
+                    matched.pos = (1.0 - ratio) * before.pos + ratio * after->pos;
+                    matched.rot = before.rot.slerp(ratio, after->rot).normalized();
+                    pose_time_error = std::max(
+                        lidar_start_time - before.stamp,
+                        after->stamp - lidar_start_time);
+                }
+
+                // Do not accept an unrelated pose after a clock reset or at startup.
+                constexpr double max_pose_offset_sec = 0.1;
+                if (pose_time_error <= max_pose_offset_sec) {
+                    job.R = matched.rot.toRotationMatrix();
+                    job.t = matched.pos;
+                    job.t_lio = matched.pos;
+                    used_lio_pose = true;
+                }
             }
-            // In LIO crop mode: use LIO position for map crop center, height band, and window.
-            // In LO mode: t_lio == t so all crop logic uses LO (original behaviour).
-            job.t_lio = (config_.elevation_map_use_lio_crop && has_lio_pose_) ? lio_pos_ : job.t;
+
+            if (!used_lio_pose && has_slam_pose_) {
+                // The LO position is still useful, but its attitude belongs to
+                // the previous processed scan. Use the IMU-interpolated current
+                // scan-start attitude so turn-induced roll is not one frame late.
+                job.R = q_w_original_l.toRotationMatrix();
+                job.t = slam_pos_;
+                job.t_lio = (config_.elevation_map_use_lio_crop && has_lio_pose_)
+                    ? lio_pos_ : job.t;
+            } else {
+                if (!used_lio_pose) {
+                    job.R = q_w_original_l.toRotationMatrix();
+                    job.t = t_w_original_l;
+                    job.t_lio = job.t;
+                }
+            }
+
         }
 
         {
             std::lock_guard<std::mutex> lock(elevation_map_queue_mutex_);
             // Drop oldest job if the thread is lagging — elevation map can miss frames,
             // odometry must not block.
-            if (elevation_map_queue_.size() >= 2)
+            if (elevation_map_queue_.size() >= 2) {
+                // Preserve the resume marker if the first post-pause job is the
+                // one discarded under load.
+                job.resuming_after_pitch_pause =
+                    job.resuming_after_pitch_pause ||
+                    elevation_map_queue_.front().resuming_after_pitch_pause;
                 elevation_map_queue_.pop();
+            }
             elevation_map_queue_.push(std::move(job));
         }
         elevation_map_cv_.notify_one();
@@ -829,13 +1059,84 @@ namespace super_odometry {
                 job = std::move(elevation_map_queue_.front());
                 elevation_map_queue_.pop();
             }
-            buildAndPublishElevationMap(job.points, job.lidar_start_time, job.R, job.t, job.t_lio);
+
+            if (config_.elevation_map_global_registration) {
+                // laser_odometry for this scan is published only after laser
+                // mapping consumes feature_info. Wait here, off the odometry
+                // callback thread, and never permanently register a prediction.
+                TimedSlamPose finalized_pose;
+                auto find_matching_pose = [this, &job, &finalized_pose]() {
+                    if (slam_pose_buffer_.empty()) return false;
+
+                    const auto after = std::lower_bound(
+                        slam_pose_buffer_.begin(), slam_pose_buffer_.end(),
+                        job.lidar_start_time,
+                        [](const TimedSlamPose& pose, double time) {
+                            return pose.stamp < time;
+                        });
+
+                    constexpr double stamp_tolerance_sec = 1e-3;
+                    const TimedSlamPose* nearest = nullptr;
+                    if (after != slam_pose_buffer_.end()) nearest = &(*after);
+                    if (after != slam_pose_buffer_.begin()) {
+                        const TimedSlamPose& before = *std::prev(after);
+                        if (nearest == nullptr ||
+                            std::abs(before.stamp - job.lidar_start_time) <
+                                std::abs(nearest->stamp - job.lidar_start_time)) {
+                            nearest = &before;
+                        }
+                    }
+
+                    if (nearest == nullptr ||
+                        std::abs(nearest->stamp - job.lidar_start_time) >
+                            stamp_tolerance_sec) {
+                        return false;
+                    }
+                    finalized_pose = *nearest;
+                    return true;
+                };
+
+                bool has_finalized_pose = false;
+                {
+                    std::unique_lock<std::mutex> pose_lock(slam_pose_mutex_);
+                    has_finalized_pose = find_matching_pose();
+                    if (!has_finalized_pose) {
+                        slam_pose_cv_.wait_for(
+                            pose_lock, std::chrono::milliseconds(1500),
+                            [this, &find_matching_pose] {
+                                return elevation_map_thread_stop_.load() ||
+                                       find_matching_pose();
+                            });
+                        has_finalized_pose = find_matching_pose();
+                    }
+                }
+
+                if (elevation_map_thread_stop_.load()) break;
+                if (!has_finalized_pose) {
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 5000,
+                        "Skipping elevation registration: no finalized laser_odometry pose for scan %.6f",
+                        job.lidar_start_time);
+                    continue;
+                }
+
+                // laser_odometry is WORLD_FRAME -> lidar_link_rect for the
+                // exact scan, matching the rectified cloud's physical origin.
+                job.R = finalized_pose.rot.toRotationMatrix();
+                job.t = finalized_pose.pos;
+                job.t_lio = finalized_pose.pos;
+            }
+
+            buildAndPublishElevationMap(
+                job.points, job.lidar_start_time, job.R, job.t, job.t_lio,
+                job.resuming_after_pitch_pause);
         }
     }
 
     void featureExtraction::buildAndPublishElevationMap(
         const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time,
-        const Eigen::Matrix3d& R, const Eigen::Vector3d& t, const Eigen::Vector3d& t_lio)
+        const Eigen::Matrix3d& R, const Eigen::Vector3d& t,
+        const Eigen::Vector3d& t_lio, bool resuming_after_pitch_pause)
     {
         if (!config_.elevation_map_enabled) return;
 
@@ -843,14 +1144,57 @@ namespace super_odometry {
         const float size       = config_.elevation_map_size;
         const float height_max = config_.elevation_map_height_cutoff;
         const float height_min = config_.elevation_map_height_min;
+        const grid_map::Position scan_center = worldAlignedGridCenter(
+            t_lio.x(), t_lio.y(), resolution);
+
+        if (resuming_after_pitch_pause) {
+            // Never mix pre-braking local scans with the first trusted scan
+            // after the vehicle has settled. The permanent world map remains.
+            elevation_map_buffer_.clear();
+        }
+
+        if (config_.elevation_map_global_registration &&
+            registered_last_stamp_ >= 0.0) {
+            const double dt = lidar_start_time - registered_last_stamp_;
+            const Eigen::Vector3d pose_delta = t - registered_last_pose_;
+            const bool clock_rollback = dt < -1e-3;
+            const bool long_sensor_gap = dt > 1.0;
+            const bool discontinuity =
+                dt >= 0.0 && dt < 1.0 &&
+                (pose_delta.head<2>().norm() > 2.0 ||
+                 std::abs(pose_delta.z()) > 0.75);
+            // A deliberately suppressed scan must not erase trusted retention
+            // because time and pose advanced while elevation updates were
+            // paused. Clock rollback is still a genuine epoch change.
+            const bool reset_registry = clock_rollback ||
+                (!resuming_after_pitch_pause &&
+                 (long_sensor_gap || discontinuity));
+            if (reset_registry) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Clearing elevation registry after odometry epoch change (dt=%.3f, delta=[%.3f %.3f %.3f])",
+                    dt, pose_delta.x(), pose_delta.y(), pose_delta.z());
+                elevation_map_buffer_.clear();
+                registered_elevation_map_ = grid_map::GridMap();
+                registered_map_resolution_ = -1.0f;
+                registered_map_size_ = -1.0f;
+            }
+        }
+
+        // The working elevation grid is vehicle-centred but gravity-aligned:
+        // its X/Y axes follow vehicle yaw while Z remains parallel to world Z.
+        // Roll and pitch are therefore removed before rasterization.
+        const double vehicle_yaw = std::atan2(R(1, 0), R(0, 0));
+        const Eigen::Matrix3d R_world_local =
+            Eigen::AngleAxisd(vehicle_yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        const Eigen::Matrix3d R_local_sensor = R_world_local.transpose() * R;
 
         // --- Build this scan's raw elevation map ---
-        // Crop is centered on LIO position so the map window is always current.
-        // Points are projected using LO pose (R, t) for stable world-frame coordinates.
+        // Points remain local here. Only the completed grid cells are registered
+        // into WORLD_FRAME after buffering and spatial filtering.
         grid_map::GridMap raw_map({"elevation"});
-        raw_map.setFrameId(WORLD_FRAME);
         raw_map.setGeometry(grid_map::Length(size, size), resolution,
-                            grid_map::Position(t_lio.x(), t_lio.y()));
+                            grid_map::Position::Zero());
         raw_map["elevation"].setConstant(NAN);
 
         // Ramped height ceiling coefficients (elevation_mapping_cupy approach).
@@ -877,141 +1221,116 @@ namespace super_odometry {
                 if (!in_range) continue;
             }
 
-            const Eigen::Vector3d p_world = R * Eigen::Vector3d(pt.x, pt.y, pt.z) + t;
-            // Height band relative to LIO sensor altitude — tracks ramps using current pose.
-            const float dz = static_cast<float>(p_world.z() - t_lio.z());
+            const Eigen::Vector3d p_local =
+                R_local_sensor * Eigen::Vector3d(pt.x, pt.y, pt.z);
+            // The local frame is gravity aligned, so converting its height to
+            // world Z requires only the local-frame origin altitude.
+            const float world_z = static_cast<float>(p_local.z() + t.z());
+            const float dz = world_z - static_cast<float>(t_lio.z());
             if (dz > height_max || dz < height_min) continue;
-            grid_map::Position pos(p_world.x(), p_world.y());
+            grid_map::Position pos(p_local.x(), p_local.y());
             if (!raw_map.isInside(pos)) continue;
             grid_map::Index idx;
             raw_map.getIndex(pos, idx);
             float& cell = raw_map.at("elevation", idx);
-            if (std::isnan(cell) || static_cast<float>(p_world.z()) < cell)
-                cell = static_cast<float>(p_world.z());
+            if (std::isnan(cell) || static_cast<float>(p_local.z()) < cell)
+                cell = static_cast<float>(p_local.z());
+        }
+
+        // Permanent registration requires evidence in this newest scan. Older
+        // buffered scans may refine its height, but cannot make an unobserved
+        // current cell eligible for another world-map write.
+        Eigen::MatrixXf current_observed_mask = Eigen::MatrixXf::Zero(
+            raw_map["elevation"].rows(), raw_map["elevation"].cols());
+        for (grid_map::GridMapIterator it(raw_map); !it.isPastEnd(); ++it) {
+            if (std::isfinite(raw_map.at("elevation", *it))) {
+                current_observed_mask((*it)(0), (*it)(1)) = 1.0f;
+            }
         }
 
         // --- Buffer management ---
-        // Keep the last N raw maps. Each is in world frame with its own center,
-        // so position tracking is implicit in the grid_map geometry.
-        elevation_map_buffer_.push_back(raw_map);
+        // Each buffered map keeps the pose of its gravity-aligned local frame.
+        // This lets us align completed cells into the newest local frame without
+        // projecting every raw LiDAR point into the world map.
+        elevation_map_buffer_.push_back(
+            BufferedElevationMap{raw_map, R_world_local, t});
         while (static_cast<int>(elevation_map_buffer_.size()) > config_.elevation_map_buffer_size)
             elevation_map_buffer_.pop_front();
 
         // --- Weighted temporal merge ---
         // Linear weights: oldest frame = weight 1, newest = weight N.
-        // All maps are in world frame so we can query any position directly.
+        // Past local maps are sampled through their relative poses into the
+        // current gravity-aligned local grid.
         grid_map::GridMap merged({"elevation"});
-        merged.setFrameId(WORLD_FRAME);
         merged.setGeometry(grid_map::Length(size, size), resolution,
-                           grid_map::Position(t_lio.x(), t_lio.y()));
+                           grid_map::Position::Zero());
         merged["elevation"].setConstant(NAN);
 
         const int N = static_cast<int>(elevation_map_buffer_.size());
+        std::vector<float> observed_values;
+        std::vector<float> observed_weights;
+        observed_values.reserve(N);
+        observed_weights.reserve(N);
+
         for (grid_map::GridMapIterator it(merged); !it.isPastEnd(); ++it) {
             grid_map::Position pos;
             merged.getPosition(*it, pos);
+            const Eigen::Vector3d p_world_on_current_plane =
+                R_world_local * Eigen::Vector3d(pos.x(), pos.y(), 0.0) + t;
 
-            float weighted_sum = 0.0f;
-            float weight_sum   = 0.0f;
+            observed_values.clear();
+            observed_weights.clear();
             for (int i = 0; i < N; ++i) {
                 // Equal weight: every frame counts the same.
                 // Linear weight: oldest=1, newest=N — newer frames dominate.
                 const float w = config_.elevation_map_equal_weight
                                 ? 1.0f
                                 : static_cast<float>(i + 1);
-                const auto& buf_map = elevation_map_buffer_[i];
-                if (!buf_map.isInside(pos)) continue;
+                const auto& buffered = elevation_map_buffer_[i];
+                const Eigen::Vector3d p_buffer_local =
+                    buffered.R_world_local.transpose() *
+                    (p_world_on_current_plane - buffered.t_world_local);
+                const grid_map::Position buffered_pos(
+                    p_buffer_local.x(), p_buffer_local.y());
+                if (!buffered.map.isInside(buffered_pos)) continue;
                 grid_map::Index buf_idx;
-                buf_map.getIndex(pos, buf_idx);
-                const float val = buf_map.at("elevation", buf_idx);
-                if (!std::isnan(val)) {
-                    weighted_sum += w * val;
-                    weight_sum   += w;
+                buffered.map.getIndex(buffered_pos, buf_idx);
+                const float buffered_height =
+                    buffered.map.at("elevation", buf_idx);
+                if (std::isfinite(buffered_height)) {
+                    // Both local frames are gravity aligned, so only their
+                    // origin altitude changes the stored local Z value.
+                    const float current_local_height = static_cast<float>(
+                        buffered_height + buffered.t_world_local.z() - t.z());
+                    observed_values.push_back(current_local_height);
+                    observed_weights.push_back(w);
                 }
             }
-            if (weight_sum > 0.0f)
+
+            if (observed_values.empty()) continue;
+
+            float weighted_sum = 0.0f;
+            float weight_sum = 0.0f;
+            for (size_t i = 0; i < observed_values.size(); ++i) {
+                weighted_sum += observed_weights[i] * observed_values[i];
+                weight_sum += observed_weights[i];
+            }
+
+            if (weight_sum > 0.0f) {
                 merged.at("elevation", *it) = weighted_sum / weight_sum;
-        }
-
-        // --- Retention (runs BEFORE gap fill and blur) ---
-        //
-        // Order matters:
-        //   1. Retention first  — restores retained cells into merged so gap fill
-        //      can use them as seeds to propagate into surrounding gaps.
-        //   2. Gap fill second  — now has both current-frame hits AND retained
-        //      values available, so it can fill gaps inside the retained area.
-        //   3. Gaussian blur last — smooths the fully-populated map for output.
-        //
-        // Retention mean is updated only from raw temporal-merge values (pre
-        // post-processing) so gap-filled / blurred interpolations never poison
-        // the stored history and retained edges stay sharp.
-        const Eigen::MatrixXf merged_pre_postproc = merged["elevation"];
-
-        if (config_.elevation_map_retention_enabled) {
-            static grid_map::GridMap retention({"elevation", "count"});
-            static float last_res = -1.0f;
-
-            if (last_res != merged.getResolution()) {
-                const float rsize = config_.elevation_map_retention_size;
-                retention.setGeometry(
-                    grid_map::Length(rsize, rsize),
-                    merged.getResolution(),
-                    grid_map::Position(t_lio.x(), t_lio.y()));
-                retention.setFrameId(merged.getFrameId());
-                retention["elevation"].setConstant(NAN);
-                retention["count"].setConstant(0.0f);
-                last_res = merged.getResolution();
-            }
-
-            const grid_map::Position new_center(t_lio.x(), t_lio.y());
-            std::vector<grid_map::BufferRegion> cleared_regions;
-            retention.move(new_center, cleared_regions);
-            for (const auto& region : cleared_regions) {
-                for (grid_map::SubmapIterator it(retention, region.getStartIndex(), region.getSize());
-                     !it.isPastEnd(); ++it) {
-                    retention.at("elevation", *it) = NAN;
-                    retention.at("count", *it) = 0.0f;
-                }
-            }
-
-            Eigen::MatrixXf& re = retention["elevation"];
-            Eigen::MatrixXf& rc = retention["count"];
-            Eigen::MatrixXf& mo = merged["elevation"];
-
-            for (grid_map::GridMapIterator it(merged); !it.isPastEnd(); ++it) {
-                const grid_map::Index midx(*it);
-                float& me_val = mo(midx(0), midx(1));
-
-                grid_map::Position pos;
-                merged.getPosition(midx, pos);
-                grid_map::Index ridx;
-                if (!retention.getIndex(pos, ridx)) continue;
-
-                const float old_count = std::isnan(rc(ridx(0), ridx(1))) ? 0.0f : rc(ridx(0), ridx(1));
-                const float old_mean  = std::isnan(re(ridx(0), ridx(1))) ? 0.0f : re(ridx(0), ridx(1));
-
-                // Use the raw temporal-merge value (pre gap-fill / blur) to decide
-                // whether there was a real LiDAR observation this frame.
-                const float raw_val = merged_pre_postproc(midx(0), midx(1));
-                if (!std::isnan(raw_val)) {
-                    // Real hit — update running mean with the unblurred observation.
-                    const float new_count = old_count + 1.0f;
-                    re(ridx(0), ridx(1)) = (old_count * old_mean + raw_val) / new_count;
-                    rc(ridx(0), ridx(1)) = new_count;
-                } else if (old_count > 0.0f) {
-                    // No hit this frame — restore retained value into merged so gap
-                    // fill (below) can use it as a seed to propagate into neighbours.
-                    me_val = old_mean;
-                }
             }
         }
 
+        // This is the only elevation source allowed into persistent world
+        // registration. Later fill/median/blur operations are display-only.
+        const Eigen::MatrixXf persistent_local_elevation = merged["elevation"];
+
+        // Display filtering is applied only after current and retained raw cells
+        // have been combined in the same world-frame output map.
+        auto apply_display_filters = [this](grid_map::GridMap& display_map) {
         // --- Gap filling: propagate known values into unknown cells ---
-        // Runs after retention so retained values are available as seeds.
-        // Gaps inside the retained area can now be filled by propagating from
-        // neighbouring retained cells rather than only from current-frame hits.
         if (config_.elevation_map_fill_passes > 0) {
-            auto& layer = merged["elevation"];
+            auto& layer = display_map["elevation"];
             const int rows = layer.rows();
             const int cols = layer.cols();
             Eigen::MatrixXf buf(rows, cols);
@@ -1038,7 +1357,7 @@ namespace super_odometry {
 
         // --- Median filter: reject single-cell spikes, preserve edges ---
         if (config_.elevation_map_median_filter) {
-            auto& layer = merged["elevation"];
+            auto& layer = display_map["elevation"];
             const int rows = layer.rows();
             const int cols = layer.cols();
             int kernel_size = config_.elevation_map_median_kernel_size;
@@ -1089,7 +1408,7 @@ namespace super_odometry {
 
         // --- Gaussian blur: smooth the fully-populated map for output ---
         if (config_.elevation_map_gaussian_blur) {
-            auto& layer = merged["elevation"];
+            auto& layer = display_map["elevation"];
             const int rows = layer.rows();
             const int cols = layer.cols();
             int kernel_size = config_.elevation_map_gaussian_kernel_size;
@@ -1143,33 +1462,150 @@ namespace super_odometry {
                 }
             }
         }
+        };
 
-        // Snap the map centre to the current LIO position before publishing.
-        // The worker thread processes the scan asynchronously — by the time it
-        // finishes (10-50ms), the 50Hz timer has already published several maps
-        // with a more advanced lio_pos_. Publishing with a stale t_lio centre
-        // causes costmap_gen's accumulation shift to jump backward then forward.
-        // Moving to current lio_pos_ here keeps the published centre monotonically
-        // advancing and consistent with the timer publishes.
-        if (config_.elevation_map_use_lio_crop) {
-            Eigen::Vector3d cur_lio;
-            {
-                std::lock_guard<std::mutex> lk(slam_pose_mutex_);
-                cur_lio = has_lio_pose_ ? lio_pos_ : t_lio;
+        // --- Register raw local cells into WORLD_FRAME ---
+        // Resample the gravity-aligned local grid onto the fixed world
+        // lattice. This transforms one height per cell, not every LiDAR point.
+        grid_map::GridMap registered_scan({"elevation"});
+        registered_scan.setFrameId(WORLD_FRAME);
+        registered_scan.setGeometry(
+            grid_map::Length(size, size), resolution, scan_center);
+        registered_scan["elevation"].setConstant(NAN);
+        Eigen::MatrixXf registered_observed = Eigen::MatrixXf::Zero(
+            registered_scan["elevation"].rows(),
+            registered_scan["elevation"].cols());
+        Eigen::MatrixXf registered_persistent_height = Eigen::MatrixXf::Constant(
+            registered_scan["elevation"].rows(),
+            registered_scan["elevation"].cols(), NAN);
+
+        for (grid_map::GridMapIterator it(registered_scan); !it.isPastEnd(); ++it) {
+            grid_map::Position world_pos;
+            registered_scan.getPosition(*it, world_pos);
+
+            // X/Y lookup is independent of height because the local frame is
+            // gravity aligned and differs from WORLD_FRAME only by yaw and translation.
+            const Eigen::Vector3d local_flat = R_world_local.transpose() *
+                (Eigen::Vector3d(world_pos.x(), world_pos.y(), t.z()) - t);
+            const grid_map::Position local_pos(local_flat.x(), local_flat.y());
+            if (!merged.isInside(local_pos)) continue;
+
+            grid_map::Index local_idx;
+            if (!merged.getIndex(local_pos, local_idx)) continue;
+            const float local_height = merged.at("elevation", local_idx);
+            if (!std::isfinite(local_height)) continue;
+
+            registered_scan.at("elevation", *it) =
+                local_height + static_cast<float>(t.z());
+            registered_observed((*it)(0), (*it)(1)) =
+                current_observed_mask(local_idx(0), local_idx(1));
+            const float persistent_height =
+                persistent_local_elevation(local_idx(0), local_idx(1));
+            if (std::isfinite(persistent_height)) {
+                registered_persistent_height((*it)(0), (*it)(1)) =
+                    persistent_height + static_cast<float>(t.z());
             }
-            merged.move(grid_map::Position(cur_lio.x(), cur_lio.y()));
         }
 
-        // Store for the high-rate timer which slides the center between scans.
+        if (config_.elevation_map_global_registration) {
+            const float retention_size = config_.elevation_map_retention_size;
+            if (registered_map_resolution_ != resolution ||
+                registered_map_size_ != retention_size ||
+                registered_elevation_map_.getSize().prod() == 0) {
+                registered_elevation_map_ = grid_map::GridMap({"elevation"});
+                registered_elevation_map_.setFrameId(WORLD_FRAME);
+                registered_elevation_map_.setGeometry(
+                    grid_map::Length(retention_size, retention_size),
+                    resolution,
+                    scan_center);
+                registered_elevation_map_["elevation"].setConstant(NAN);
+                registered_map_resolution_ = resolution;
+                registered_map_size_ = retention_size;
+            }
+
+            // The registry is a bounded rolling map. Cells falling outside the
+            // retention square are discarded as the vehicle advances.
+            registered_elevation_map_.move(scan_center);
+
+            // A directly observed current cell replaces the old world height.
+            // Cells not measured by this local map retain their previous value.
+            for (grid_map::GridMapIterator it(registered_scan); !it.isPastEnd(); ++it) {
+                const float current_height =
+                    registered_persistent_height((*it)(0), (*it)(1));
+                if (!std::isfinite(current_height) ||
+                    registered_observed((*it)(0), (*it)(1)) < 0.5f) {
+                    continue;
+                }
+
+                grid_map::Position world_pos;
+                registered_scan.getPosition(*it, world_pos);
+                grid_map::Index global_idx;
+                if (!registered_elevation_map_.getIndex(world_pos, global_idx)) continue;
+                registered_elevation_map_.at("elevation", global_idx) = current_height;
+            }
+
+            // Publish only the normal local-sized window, sampled from the bounded
+            // global registry. The full retention square is never published here.
+            grid_map::GridMap output({"elevation"});
+            output.setFrameId(WORLD_FRAME);
+            output.setGeometry(
+                grid_map::Length(size, size), resolution, scan_center);
+            output["elevation"].setConstant(NAN);
+            for (grid_map::GridMapIterator it(output); !it.isPastEnd(); ++it) {
+                grid_map::Position world_pos;
+                output.getPosition(*it, world_pos);
+                grid_map::Index global_idx;
+                if (!registered_elevation_map_.getIndex(world_pos, global_idx)) continue;
+                output.at("elevation", *it) =
+                    registered_elevation_map_.at("elevation", global_idx);
+            }
+
+            // Overlay current buffered raw cells before applying one common
+            // display filter to both current and retained data.
+            for (grid_map::GridMapIterator it(output); !it.isPastEnd(); ++it) {
+                const float display_height = registered_scan.at("elevation", *it);
+                if (std::isfinite(display_height)) {
+                    output.at("elevation", *it) = display_height;
+                }
+            }
+            merged = std::move(output);
+            registered_last_stamp_ = lidar_start_time;
+            registered_last_pose_ = t;
+        } else {
+            // Local-grid-first operation without global memory.
+            merged = std::move(registered_scan);
+        }
+
+        apply_display_filters(merged);
+
+        // The worker is the only writer of the global registry. Keep an
+        // immutable snapshot for the publish timer so a paused map can follow
+        // the vehicle without touching live registration state.
+        grid_map::GridMap registered_snapshot;
+        if (config_.elevation_map_global_registration) {
+            registered_snapshot = registered_elevation_map_;
+        }
+
+        // The normal update contains fixed WORLD_FRAME cells sampled at this
+        // scan's final laser-odometry pose. Only the paused publish timer moves
+        // the window, using its immutable retained-registry snapshot.
+        builtin_interfaces::msg::Time publish_stamp =
+            rclcpp::Time(static_cast<int64_t>(lidar_start_time * 1e9));
+
+        // Store the finalized snapshot for optional between-scan republishing.
         {
             std::lock_guard<std::mutex> lock(latest_map_mutex_);
             latest_elevation_map_ = merged;
+            if (config_.elevation_map_global_registration) {
+                latest_registered_elevation_map_ = std::move(registered_snapshot);
+            } else {
+                latest_registered_elevation_map_ = grid_map::GridMap();
+            }
+            latest_elevation_stamp_ = publish_stamp;
         }
 
         auto msg = grid_map::GridMapRosConverter::toMessage(merged);
-        // Use this->now() so the TF lookup in costmap_gen is at the same wall time
-        // as the timer publishes — consistent yaw, no stamp-driven heading jumps.
-        msg->header.stamp = this->now();
+        msg->header.stamp = publish_stamp;
         pubElevationMap->publish(*msg);
 
         if (config_.elevation_map_costmap_enabled) {
@@ -1383,6 +1819,60 @@ namespace super_odometry {
         }
     }
 
+    void featureExtraction::updateElevationPauseState(
+        double timestamp, double pitch_rate)
+    {
+        if (!config_.elevation_map_pitch_rate_pause_enabled) return;
+
+        const double absolute_pitch_rate = std::abs(pitch_rate);
+        bool paused_now = false;
+        bool resumed_now = false;
+        const bool was_paused = elevation_update_paused_.load();
+
+        if (absolute_pitch_rate >=
+            config_.elevation_map_pause_pitch_rate_threshold) {
+            paused_now = !was_paused;
+            elevation_update_paused_.store(true);
+            pitch_motion_settling_start_time_ = -1.0;
+        } else if (was_paused) {
+            if (absolute_pitch_rate <=
+                config_.elevation_map_resume_pitch_rate_threshold) {
+                if (pitch_motion_settling_start_time_ < 0.0) {
+                    pitch_motion_settling_start_time_ = timestamp;
+                }
+                if (timestamp - pitch_motion_settling_start_time_ >=
+                    config_.elevation_map_settling_time_seconds) {
+                    elevation_update_paused_.store(false);
+                    pitch_motion_settling_start_time_ = -1.0;
+                    resumed_now = true;
+                }
+            } else {
+                // Require one uninterrupted calm interval before resuming.
+                pitch_motion_settling_start_time_ = -1.0;
+            }
+        }
+
+        if (paused_now) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Pausing elevation updates: |base_link pitch rate| %.3f rad/s >= %.3f rad/s",
+                absolute_pitch_rate,
+                config_.elevation_map_pause_pitch_rate_threshold);
+        } else if (resumed_now) {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Resuming elevation updates after %.3f s below %.3f rad/s",
+                config_.elevation_map_settling_time_seconds,
+                config_.elevation_map_resume_pitch_rate_threshold);
+        }
+    }
+
+    bool featureExtraction::elevationUpdatePaused()
+    {
+        if (!config_.elevation_map_pitch_rate_pause_enabled) return false;
+        return elevation_update_paused_.load();
+    }
+
     void featureExtraction::imu_Handler(const sensor_msgs::msg::Imu::SharedPtr msg_in) {
         m_buf.lock();
 
@@ -1401,6 +1891,7 @@ namespace super_odometry {
             utils::rotate_imu_to_frame(imu_msg, Q_IMU_TO_BASE);
         }
         auto measurement = parseImuMessage(imu_msg);
+        updateElevationPauseState(measurement.timestamp, measurement.gyr.y());
         
         calculateDeltaTime(measurement.timestamp);
         

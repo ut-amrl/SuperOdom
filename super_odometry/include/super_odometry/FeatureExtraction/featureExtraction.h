@@ -20,6 +20,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include <sensor_msgs/msg/imu.hpp>
+#include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <nav_msgs/msg/odometry.hpp>
@@ -114,9 +115,13 @@ namespace super_odometry {
         bool elevation_map_costmap_enabled;  // publish occupancy grid + grayscale image from elevation
         float elevation_map_costmap_low;     // height below this → occupied
         float elevation_map_costmap_high;    // height above this → occupied
-        bool  elevation_map_retention_enabled; // accumulate running-mean per cell; fill NaN from history
-        float elevation_map_retention_size;   // size of the global retention map (m), e.g. 100
-        bool  elevation_map_use_lio_crop;     // true: crop window centered on LIO pose; false: LO (original)
+        bool  elevation_map_global_registration; // register completed local cells into a bounded world map
+        float elevation_map_retention_size;  // side length of the bounded world map (m)
+        bool  elevation_map_use_lio_crop;     // true: use timestamp-matched LIO pose before finalized registration
+        bool  elevation_map_pitch_rate_pause_enabled; // pause map writes during rapid pitch motion
+        float elevation_map_pause_pitch_rate_threshold; // absolute base-frame pitch rate that pauses updates (rad/s)
+        float elevation_map_resume_pitch_rate_threshold; // absolute pitch rate considered settled (rad/s)
+        double elevation_map_settling_time_seconds; // continuous settled time required before updates resume
     };
 
     struct ImuMeasurement {
@@ -185,7 +190,9 @@ namespace super_odometry {
                                          Eigen::Quaterniond q_w_original_l);
 
         void buildAndPublishElevationMap(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time,
-                                         const Eigen::Matrix3d& R, const Eigen::Vector3d& t, const Eigen::Vector3d& t_lio);
+                                         const Eigen::Matrix3d& R, const Eigen::Vector3d& t,
+                                         const Eigen::Vector3d& t_lio,
+                                         bool resuming_after_pitch_pause);
         void enqueueElevationMapJob(const pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr& points, double lidar_start_time);
         void elevationMapWorker();
 
@@ -269,21 +276,62 @@ namespace super_odometry {
         Eigen::Quaterniond q_w_original_l;
         Eigen::Vector3d t_w_original_l;
 
-        // LO pose from laser_odometry (10Hz) — used for point projection (R, t).
+        // Finalized per-scan LO poses from laser_odometry (10Hz). Permanent
+        // world registration must use the pose with the matching LiDAR stamp.
+        struct TimedSlamPose {
+            double stamp;
+            Eigen::Vector3d pos;
+            Eigen::Quaterniond rot;
+        };
         Eigen::Vector3d slam_pos_{Eigen::Vector3d::Zero()};
         Eigen::Quaterniond slam_rot_{Eigen::Quaterniond::Identity()};
+        builtin_interfaces::msg::Time slam_stamp_{};
+        std::deque<TimedSlamPose> slam_pose_buffer_;
         bool has_slam_pose_{false};
         std::mutex slam_pose_mutex_;
+        std::condition_variable slam_pose_cv_;
 
-        // LIO pose from state_estimation (200Hz) — used for map crop center and height band.
+        // LIO pose from state_estimation (200Hz). Positions are converted from the
+        // published base_link origin to the rectified LiDAR origin on receipt.
+        struct TimedLioPose {
+            double stamp;
+            Eigen::Vector3d pos;
+            Eigen::Quaterniond rot;
+        };
         Eigen::Vector3d lio_pos_{Eigen::Vector3d::Zero()};
+        builtin_interfaces::msg::Time lio_stamp_{};
+        std::deque<TimedLioPose> lio_pose_buffer_;
         bool has_lio_pose_{false};
 
-        // Per-scan elevation maps buffered for temporal averaging
-        std::deque<grid_map::GridMap> elevation_map_buffer_;
+        // The IMU callback updates this hysteretic pause state after rotating
+        // angular velocity into base_link. A LiDAR job snapshots the state so
+        // worker latency cannot change whether that scan is accepted.
+        void updateElevationPauseState(double timestamp, double pitch_rate);
+        bool elevationUpdatePaused();
+        std::atomic<bool> elevation_update_paused_{false};
+        double pitch_motion_settling_start_time_{-1.0};
+        std::atomic<bool> elevation_scans_skipped_for_pitch_{false};
 
-        // Latest merged map, republished at high rate with updated position
+        // Per-scan gravity-aligned local elevation maps and the pose of each
+        // local frame. Buffer alignment operates on completed cells, not points.
+        struct BufferedElevationMap {
+            grid_map::GridMap map;
+            Eigen::Matrix3d R_world_local;
+            Eigen::Vector3d t_world_local;
+        };
+        std::deque<BufferedElevationMap> elevation_map_buffer_;
+
+        // Bounded rolling registry of completed elevation cells in WORLD_FRAME.
+        grid_map::GridMap registered_elevation_map_;
+        float registered_map_resolution_{-1.0f};
+        float registered_map_size_{-1.0f};
+        double registered_last_stamp_{-1.0};
+        Eigen::Vector3d registered_last_pose_{Eigen::Vector3d::Zero()};
+
+        // Latest finalized world snapshot, optionally republished at high rate.
         grid_map::GridMap latest_elevation_map_;
+        grid_map::GridMap latest_registered_elevation_map_;
+        builtin_interfaces::msg::Time latest_elevation_stamp_{};
         std::mutex latest_map_mutex_;
         rclcpp::TimerBase::SharedPtr elevation_map_timer_;
 
@@ -292,8 +340,9 @@ namespace super_odometry {
             pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr points;
             double lidar_start_time;
             Eigen::Matrix3d R;
-            Eigen::Vector3d t;      // LO pose — used for point projection into world frame
-            Eigen::Vector3d t_lio;  // LIO pose — used for map crop center and height band
+            Eigen::Vector3d t;      // Timestamp-matched local-frame origin in WORLD_FRAME
+            Eigen::Vector3d t_lio;  // Pose used for map crop center and height band
+            bool resuming_after_pitch_pause{false};
         };
         std::queue<ElevationMapJob> elevation_map_queue_;
         std::mutex elevation_map_queue_mutex_;

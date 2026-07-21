@@ -58,8 +58,6 @@
         yaw_min: -1.57       # radians; [yaw_min, yaw_max] kept (or wrap-around if min > max)
         yaw_max:  1.57
         min_range: 2.0      # 3D body-frame min range (m); skips truck body — tune to truck size
-        enable_retention: true        # accumulate running per-cell mean; fill NaN cells from history
-        retention_map_size: 40.0     # size of the global retention map in metres (covers the full track)
         enable_costmap: false         # publish occupancy grid + grayscale image derived from elevation
         costmap_low_threshold: -0.1   # height below this (m) → occupied
         costmap_high_threshold: 0.1   # height above this (m) → occupied

@@ -146,6 +146,7 @@ namespace super_odometry {
         rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pubStateTwistWf;
         rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pubHealthStatus;
         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubImuPath;
+        tf2_ros::TransformBroadcaster tf_broadcaster_{this};
 
 
         rclcpp::CallbackGroup::SharedPtr cb_group_;

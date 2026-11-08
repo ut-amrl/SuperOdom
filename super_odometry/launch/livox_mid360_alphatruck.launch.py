@@ -46,7 +46,7 @@ def generate_launch_description():
     )
     dashboard_arg = DeclareLaunchArgument(
         "dashboard",
-        default_value="true",
+        default_value="false",
         description="Launch the live terminal dashboard",
     )
     use_sim_time_arg = DeclareLaunchArgument(
